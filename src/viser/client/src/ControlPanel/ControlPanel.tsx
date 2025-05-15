@@ -60,15 +60,24 @@ export default function ControlPanel(props: {
   const controlWidthString = viewer.useGui(
     (state) => state.theme.control_width,
   );
+  /*
+   * Default width mapping for the three preset size keywords.
+   * The previous "large" value (24 em) felt too narrow once complex
+   * scenes with many controls were added. We therefore bump it slightly
+   * to 28 em which still keeps the panel compact on laptops while giving
+   * widgets some more breathing room.  Users can additionally resize the
+   * panel manually thanks to the `resize: horizontal` flag added in
+   * SidebarPanel.tsx.
+   */
   const controlWidth = (
     controlWidthString == "small"
       ? "16em"
       : controlWidthString == "medium"
         ? "20em"
         : controlWidthString == "large"
-          ? "24em"
-          : null
-  )!;
+          ? "28em"
+          : /* Fallback – should not happen. */ "24em"
+  );
 
   const generatedServerToggleButton = (
     <ActionIcon

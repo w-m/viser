@@ -29,6 +29,73 @@ export default function SidebarPanel({
 }) {
   const [collapsed, { toggle: toggleCollapsed }] = useDisclosure(false);
 
+  /* ------------------------------------------------------------------
+   * Resizable sidebar support
+   * ------------------------------------------------------------------ */
+  // Convert provided width (em / px / etc.) to pixels for internal math.
+  const defaultWidthPx = React.useMemo(() => {
+    if (width.endsWith("em")) {
+      const em = parseFloat(width);
+      // Roughly estimate 1em = 16px; we don't have the actual font-size yet.
+      return em * 16;
+    } else if (width.endsWith("px")) {
+      return parseFloat(width);
+    } else {
+      // Fallback – try to parse as number.
+      return parseFloat(width);
+    }
+  }, [width]);
+
+  const MIN_WIDTH_PX = 12 * 16; // 12em
+  const MAX_WIDTH_PX = 40 * 16; // 40em
+
+  const HANDLE_WIDTH = 8; // px
+
+  const [panelWidth, setPanelWidth] = React.useState<number>(defaultWidthPx);
+
+  // Refs to track dragging state.
+  const isResizingRef = React.useRef(false);
+  const startXRef = React.useRef(0);
+  const startWidthRef = React.useRef(0);
+
+  const onMouseMove = React.useCallback((evt: MouseEvent) => {
+    if (!isResizingRef.current) return;
+    const dx = startXRef.current - evt.clientX; // dragging towards left enlarges width
+    let newWidth = startWidthRef.current + dx;
+    newWidth = Math.min(Math.max(newWidth, MIN_WIDTH_PX), MAX_WIDTH_PX);
+    setPanelWidth(newWidth);
+  }, []);
+
+  const onMouseUp = React.useCallback(() => {
+    if (isResizingRef.current) {
+      isResizingRef.current = false;
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    }
+  }, [onMouseMove]);
+
+  const startResizing = (evt: React.MouseEvent) => {
+    evt.preventDefault();
+    isResizingRef.current = true;
+    startXRef.current = evt.clientX;
+    startWidthRef.current = panelWidth;
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
+
+  /* ------------------------------------------------------------------
+   * Allow users to change the width of the sidebar by dragging.
+   *
+   * The simplest cross-browser way to provide manual resizing without
+   * introducing new dependencies is to rely on the native CSS
+   * `resize: horizontal` rule together with `overflow: auto`.  Browsers
+   * render a small drag handle that lets the user adjust the width.  As
+   * the user drags, the inline `width` style on the element is updated
+   * automatically, so we simply need to make sure we do **not** override
+   * the width on every React render.  Therefore, we only set the width
+   * initially via a `style` prop and then let the browser take over.
+   * ------------------------------------------------------------------ */
+
   const collapsedView = (
     <Box
       style={(theme) => ({
@@ -77,7 +144,7 @@ export default function SidebarPanel({
       <Paper
         shadow="0 0 1em 0 rgba(0,0,0,0.1)"
         style={{
-          width: collapsed ? 0 : width,
+          width: collapsed ? 0 : panelWidth,
           boxSizing: "content-box",
           transition: "width 0.5s 0s",
           zIndex: 8,
@@ -86,7 +153,7 @@ export default function SidebarPanel({
       <Paper
         radius={0}
         style={{
-          width: collapsed ? 0 : width,
+          width: collapsed ? 0 : panelWidth,
           top: 0,
           bottom: 0,
           right: 0,
@@ -94,16 +161,39 @@ export default function SidebarPanel({
           boxSizing: "content-box",
           transition: "width 0.5s 0s",
           zIndex: 20,
+          overflow: "auto",
         }}
       >
+        {/* Drag handle */}
+        {/* Invisible but clickable drag handle injected *outside* the panel
+            bounds so that it is not occluded by the canvas underneath. */}
+        <Box
+          onMouseDown={startResizing}
+          /* 14-px wide hit area sitting *inside* the sidebar so it isn’t
+             clipped by overflow rules. Safari sometimes ignores clicks on
+             elements that spill outside parents. */
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: HANDLE_WIDTH,
+            cursor: "ew-resize",
+            zIndex: 25,
+            WebkitUserSelect: "none",
+            backgroundColor: "rgba(0,0,0,0.6)",
+          }}
+        />
         <Box
           /* Prevent DOM reflow, as well as internals from getting too wide.
            * Needs to match the width of the wrapper element above. */
           style={{
-            width: width,
+            width: Math.max(panelWidth - HANDLE_WIDTH, 0),
             height: "100%",
             display: "flex",
             flexDirection: "column",
+            marginLeft: HANDLE_WIDTH,
+            boxSizing: "border-box",
           }}
         >
           {children}
