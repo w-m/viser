@@ -23,7 +23,7 @@ from typing_extensions import Literal
 
 from . import _client_autobuild, _messages, infra
 from . import transforms as tf
-from ._gui_api import Color, GuiApi, _make_uuid
+from ._gui_api import GuiApi, LiteralColor, _make_uuid
 from ._notification_handle import NotificationHandle, _NotificationHandleState
 from ._scene_api import SceneApi, cast_vector
 from ._threadpool_exceptions import print_threadpool_errors
@@ -75,7 +75,8 @@ class _CameraHandleState:
     wxyz: npt.NDArray[np.float64]
     position: npt.NDArray[np.float64]
     fov: float
-    aspect: float
+    image_height: int
+    image_width: int
     near: float
     far: float
     look_at: npt.NDArray[np.float64]
@@ -94,7 +95,8 @@ class CameraHandle:
             wxyz=np.zeros(4),
             position=np.zeros(3),
             fov=0.0,
-            aspect=0.0,
+            image_height=0,
+            image_width=0,
             near=0.01,
             far=1000.0,
             look_at=np.zeros(3),
@@ -247,7 +249,19 @@ class CameraHandle:
     def aspect(self) -> float:
         """Canvas width divided by height. Not assignable."""
         assert self._state.update_timestamp != 0.0
-        return self._state.aspect
+        return float(self._state.image_width) / self._state.image_height
+
+    @property
+    def image_height(self) -> int:
+        """Image height in pixels. Not assignable."""
+        assert self._state.update_timestamp != 0.0
+        return self._state.image_height
+
+    @property
+    def image_width(self) -> int:
+        """Image width in pixels. Not assignable."""
+        assert self._state.update_timestamp != 0.0
+        return self._state.image_width
 
     @property
     def update_timestamp(self) -> float:
@@ -439,7 +453,7 @@ class ClientHandle(_BackwardsCompatibilityShim if not TYPE_CHECKING else object)
         loading: bool = False,
         with_close_button: bool = True,
         auto_close: int | Literal[False] = False,
-        color: Color | None = None,
+        color: LiteralColor | tuple[int, int, int] | None = None,
     ) -> NotificationHandle:
         """Add a notification to the client's interface.
 
@@ -646,7 +660,8 @@ class ViserServer(_BackwardsCompatibilityShim if not TYPE_CHECKING else object):
                     np.array(message.wxyz),
                     np.array(message.position),
                     fov=message.fov,
-                    aspect=message.aspect,
+                    image_height=message.image_height,
+                    image_width=message.image_width,
                     near=message.near,
                     far=message.far,
                     look_at=np.array(message.look_at),
@@ -760,6 +775,7 @@ class ViserServer(_BackwardsCompatibilityShim if not TYPE_CHECKING else object):
             self.request_share_url()
 
         self.scene.reset()
+        self.scene.set_up_direction("+z")
         self.gui.reset()
         self.gui.set_panel_label(label)
 

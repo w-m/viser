@@ -81,7 +81,7 @@ TString = TypeVar("TString", bound=str)
 TLiteralString = TypeVar("TLiteralString", bound=LiteralString)
 T = TypeVar("T")
 LengthTenStrTuple: TypeAlias = Tuple[str, str, str, str, str, str, str, str, str, str]
-Color: TypeAlias = Literal[
+LiteralColor: TypeAlias = Literal[
     "dark",
     "gray",
     "red",
@@ -790,7 +790,7 @@ class GuiApi:
         disabled: bool = False,
         visible: bool = True,
         hint: str | None = None,
-        color: Color | None = None,
+        color: LiteralColor | tuple[int, int, int] | None = None,
         icon: IconName | None = None,
         order: float | None = None,
     ) -> GuiButtonHandle:
@@ -840,7 +840,7 @@ class GuiApi:
         disabled: bool = False,
         visible: bool = True,
         hint: str | None = None,
-        color: Color | None = None,
+        color: LiteralColor | tuple[int, int, int] | None = None,
         icon: IconName | None = None,
         mime_type: str = "*/*",
         order: float | None = None,
@@ -979,16 +979,19 @@ class GuiApi:
         self,
         label: str,
         initial_value: str,
+        multiline: bool = False,
         disabled: bool = False,
         visible: bool = True,
         hint: str | None = None,
         order: float | None = None,
     ) -> GuiTextHandle:
-        """Add a text input to the GUI.
+        r"""Add a text input to the GUI.
 
         Args:
             label: Label to display on the text input.
             initial_value: Initial value of the text input.
+            multiline: Whether the text input supports multiple lines, delimited with
+                the \n character.
             disabled: Whether the text input is disabled.
             visible: Whether the text input is visible.
             hint: Optional hint to display on hover.
@@ -1014,6 +1017,7 @@ class GuiApi:
                         hint=hint,
                         disabled=disabled,
                         visible=visible,
+                        multiline=multiline,
                     ),
                 ),
             )
@@ -1302,7 +1306,7 @@ class GuiApi:
         value: float,
         visible: bool = True,
         animated: bool = False,
-        color: Color | None = None,
+        color: LiteralColor | tuple[int, int, int] | None = None,
         order: float | None = None,
     ) -> GuiProgressBarHandle:
         """Add a progress bar to the GUI.
@@ -1599,14 +1603,14 @@ class GuiApi:
             )
         )
 
-    class GuiMessage(Protocol[GuiInputPropsType]):
+    class _GuiMessage(Protocol[GuiInputPropsType]):
         uuid: str
         props: GuiInputPropsType
 
     def _create_gui_input(
         self,
         value: T,
-        message: GuiMessage,
+        message: _GuiMessage,
         is_button: bool = False,
     ) -> _GuiHandleState[T]:
         """Private helper for adding a simple GUI element."""

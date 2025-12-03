@@ -17,6 +17,8 @@ export interface CameraFrustumMessage {
     color: [number, number, number];
     image_media_type: "image/jpeg" | "image/png" | null;
     _image_data: Uint8Array | null;
+    cast_shadow: boolean;
+    receive_shadow: boolean;
   };
 }
 /** GlTF message.
@@ -26,7 +28,12 @@ export interface CameraFrustumMessage {
 export interface GlbMessage {
   type: "GlbMessage";
   name: string;
-  props: { glb_data: Uint8Array; scale: number };
+  props: {
+    glb_data: Uint8Array;
+    scale: number;
+    cast_shadow: boolean;
+    receive_shadow: boolean;
+  };
 }
 /** Coordinate frame message.
  *
@@ -54,8 +61,8 @@ export interface BatchedAxesMessage {
   type: "BatchedAxesMessage";
   name: string;
   props: {
-    wxyzs_batched: Uint8Array;
-    positions_batched: Uint8Array;
+    batched_wxyzs: Uint8Array;
+    batched_positions: Uint8Array;
     axes_length: number;
     axes_radius: number;
   };
@@ -116,7 +123,8 @@ export interface PointCloudMessage {
     points: Uint8Array;
     colors: Uint8Array;
     point_size: number;
-    point_ball_norm: number;
+    point_shape: "square" | "diamond" | "circle" | "rounded" | "sparkle";
+    precision: "float16" | "float32";
   };
 }
 /** Directional light message.
@@ -212,12 +220,14 @@ export interface MeshMessage {
   props: {
     vertices: Uint8Array;
     faces: Uint8Array;
-    color: [number, number, number] | null;
+    color: [number, number, number];
     wireframe: boolean;
     opacity: number | null;
     flat_shading: boolean;
     side: "front" | "back" | "double";
     material: "standard" | "toon3" | "toon5";
+    cast_shadow: boolean;
+    receive_shadow: boolean;
   };
 }
 /** Skinned mesh message.
@@ -230,16 +240,58 @@ export interface SkinnedMeshMessage {
   props: {
     vertices: Uint8Array;
     faces: Uint8Array;
-    color: [number, number, number] | null;
+    color: [number, number, number];
     wireframe: boolean;
     opacity: number | null;
     flat_shading: boolean;
     side: "front" | "back" | "double";
     material: "standard" | "toon3" | "toon5";
+    cast_shadow: boolean;
+    receive_shadow: boolean;
     bone_wxyzs: Uint8Array;
     bone_positions: Uint8Array;
     skin_indices: Uint8Array;
     skin_weights: Uint8Array;
+  };
+}
+/** Message from server->client carrying batched meshes information.
+ *
+ * (automatically generated)
+ */
+export interface BatchedMeshesMessage {
+  type: "BatchedMeshesMessage";
+  name: string;
+  props: {
+    batched_wxyzs: Uint8Array;
+    batched_positions: Uint8Array;
+    lod: "auto" | "off" | [number, number][];
+    vertices: Uint8Array;
+    faces: Uint8Array;
+    color: [number, number, number];
+    wireframe: boolean;
+    opacity: number | null;
+    flat_shading: boolean;
+    side: "front" | "back" | "double";
+    material: "standard" | "toon3" | "toon5";
+    cast_shadow: boolean;
+    receive_shadow: boolean;
+  };
+}
+/** Message from server->client carrying batched GLB information.
+ *
+ * (automatically generated)
+ */
+export interface BatchedGlbMessage {
+  type: "BatchedGlbMessage";
+  name: string;
+  props: {
+    batched_wxyzs: Uint8Array;
+    batched_positions: Uint8Array;
+    lod: "auto" | "off" | [number, number][];
+    glb_data: Uint8Array;
+    scale: number;
+    cast_shadow: boolean;
+    receive_shadow: boolean;
   };
 }
 /** Message for transform gizmos.
@@ -253,7 +305,6 @@ export interface TransformControlsMessage {
     scale: number;
     line_width: number;
     fixed: boolean;
-    auto_transform: boolean;
     active_axes: [boolean, boolean, boolean];
     disable_axes: boolean;
     disable_sliders: boolean;
@@ -276,6 +327,8 @@ export interface ImageMessage {
     _data: Uint8Array;
     render_width: number;
     render_height: number;
+    cast_shadow: boolean;
+    receive_shadow: boolean;
   };
 }
 /** Message from server->client carrying line segments information.
@@ -398,6 +451,7 @@ export interface GuiProgressBarMessage {
       | "yellow"
       | "orange"
       | "teal"
+      | [number, number, number]
       | null;
     visible: boolean;
   };
@@ -479,6 +533,7 @@ export interface GuiButtonMessage {
       | "yellow"
       | "orange"
       | "teal"
+      | [number, number, number]
       | null;
     _icon_html: string | null;
   };
@@ -512,6 +567,7 @@ export interface GuiUploadButtonMessage {
       | "yellow"
       | "orange"
       | "teal"
+      | [number, number, number]
       | null;
     _icon_html: string | null;
     mime_type: string;
@@ -692,6 +748,7 @@ export interface GuiTextMessage {
     hint: string | null;
     visible: boolean;
     disabled: boolean;
+    multiline: boolean;
   };
 }
 /** GuiDropdownMessage(uuid: 'str', value: 'str', container_uuid: 'str', props: 'GuiDropdownProps')
@@ -777,6 +834,7 @@ export interface NotificationMessage {
       | "yellow"
       | "orange"
       | "teal"
+      | [number, number, number]
       | null;
   };
 }
@@ -800,7 +858,8 @@ export interface ViewerCameraMessage {
   fov: number;
   near: number;
   far: number;
-  aspect: number;
+  image_height: number;
+  image_width: number;
   look_at: [number, number, number];
   up_direction: [number, number, number];
 }
@@ -1216,6 +1275,8 @@ export type Message =
   | SpotLightMessage
   | MeshMessage
   | SkinnedMeshMessage
+  | BatchedMeshesMessage
+  | BatchedGlbMessage
   | TransformControlsMessage
   | ImageMessage
   | LineSegmentsMessage
@@ -1300,6 +1361,8 @@ export type SceneNodeMessage =
   | SpotLightMessage
   | MeshMessage
   | SkinnedMeshMessage
+  | BatchedMeshesMessage
+  | BatchedGlbMessage
   | TransformControlsMessage
   | ImageMessage
   | LineSegmentsMessage
@@ -1344,6 +1407,8 @@ const typeSetSceneNodeMessage = new Set([
   "SpotLightMessage",
   "MeshMessage",
   "SkinnedMeshMessage",
+  "BatchedMeshesMessage",
+  "BatchedGlbMessage",
   "TransformControlsMessage",
   "ImageMessage",
   "LineSegmentsMessage",
