@@ -1,6 +1,7 @@
 import { ViewerContext } from "../ViewerContext";
-import { useThrottledMessageSender } from "../WebsocketFunctions";
+import { useThrottledMessageSender } from "../WebsocketUtils";
 import { GuiComponentContext } from "./GuiComponentContext";
+import { shallowObjectKeysEqual } from "../utils/shallowObjectKeysEqual";
 
 import { Box } from "@mantine/core";
 import React from "react";
@@ -17,6 +18,7 @@ import RgbaComponent from "../components/Rgba";
 import ButtonGroupComponent from "../components/ButtonGroup";
 import MarkdownComponent from "../components/Markdown";
 import PlotlyComponent from "../components/PlotlyComponent";
+import UplotComponent from "../components/UplotComponent";
 import TabGroupComponent from "../components/TabGroup";
 import FolderComponent from "../components/Folder";
 import MultiSliderComponent from "../components/MultiSlider";
@@ -33,7 +35,7 @@ export default function GeneratedGuiContainer({
 }) {
   const viewer = React.useContext(ViewerContext)!;
   const updateGuiProps = viewer.useGui((state) => state.updateGuiProps);
-  const messageSender = useThrottledMessageSender(50);
+  const messageSender = useThrottledMessageSender(50).send;
 
   function setValue(uuid: string, value: NonNullable<unknown>) {
     updateGuiProps(uuid, { value: value });
@@ -60,15 +62,29 @@ export default function GeneratedGuiContainer({
 function GuiContainer({ containerUuid }: { containerUuid: string }) {
   const viewer = React.useContext(ViewerContext)!;
 
-  const guiIdSet =
-    viewer.useGui(
-      (state) => state.guiUuidSetFromContainerUuid[containerUuid],
-    ) ?? {};
+  // Ensure that the container exists in state. The goal of this is to prevent a race
+  // condition where `guiIdSet` is undefined on first render, which prevents zustand
+  // from tracking changes to it.
+  if (
+    viewer.useGui.getState().guiUuidSetFromContainerUuid[containerUuid] ===
+    undefined
+  ) {
+    viewer.useGui.setState({
+      ...viewer.useGui.getState(),
+      guiUuidSetFromContainerUuid: {
+        ...viewer.useGui.getState().guiUuidSetFromContainerUuid,
+        [containerUuid]: {},
+      },
+    });
+  }
+  const guiIdSet = viewer.useGui(
+    (state) => state.guiUuidSetFromContainerUuid[containerUuid],
+    shallowObjectKeysEqual,
+  )!;
 
   // Render each GUI element in this container.
   const guiIdArray = [...Object.keys(guiIdSet)];
   const guiOrderFromId = viewer!.useGui((state) => state.guiOrderFromUuid);
-  if (guiIdSet === undefined) return null;
 
   let guiUuidOrderPairArray = guiIdArray.map((uuid) => ({
     uuid: uuid,
@@ -79,8 +95,12 @@ function GuiContainer({ containerUuid }: { containerUuid: string }) {
   );
   const out = (
     <Box pt="xs">
-      {guiUuidOrderPairArray.map((pair) => (
-        <GeneratedInput key={pair.uuid} guiUuid={pair.uuid} />
+      {guiUuidOrderPairArray.map((pair, index) => (
+        <GeneratedInput
+          key={pair.uuid}
+          guiUuid={pair.uuid}
+          nextGuiUuid={guiUuidOrderPairArray[index + 1]?.uuid ?? null}
+        />
       ))}
     </Box>
   );
@@ -88,7 +108,10 @@ function GuiContainer({ containerUuid }: { containerUuid: string }) {
 }
 
 /** A single generated GUI element. */
-function GeneratedInput(props: { guiUuid: string }) {
+function GeneratedInput(props: {
+  guiUuid: string;
+  nextGuiUuid: string | null;
+}) {
   const viewer = React.useContext(ViewerContext)!;
   const conf = viewer.useGui((state) => state.guiConfigFromUuid[props.guiUuid]);
   if (conf === undefined) {
@@ -97,7 +120,7 @@ function GeneratedInput(props: { guiUuid: string }) {
   }
   switch (conf.type) {
     case "GuiFolderMessage":
-      return <FolderComponent {...conf} />;
+      return <FolderComponent {...conf} nextGuiUuid={props.nextGuiUuid} />;
     case "GuiTabGroupMessage":
       return <TabGroupComponent {...conf} />;
     case "GuiMarkdownMessage":
@@ -106,6 +129,8 @@ function GeneratedInput(props: { guiUuid: string }) {
       return <HtmlComponent {...conf} />;
     case "GuiPlotlyMessage":
       return <PlotlyComponent {...conf} />;
+    case "GuiUplotMessage":
+      return <UplotComponent {...conf} />;
     case "GuiImageMessage":
       return <ImageComponent {...conf} />;
     case "GuiButtonMessage":

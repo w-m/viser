@@ -27,17 +27,6 @@ export type ViewerMutable = {
   cameraControl: CameraControls | null;
 
   // Scene management.
-  nodeAttributesFromName: {
-    [name: string]:
-      | undefined
-      | {
-          poseUpdateState?: "updated" | "needsUpdate" | "waitForMakeObject";
-          wxyz?: [number, number, number, number];
-          position?: [number, number, number];
-          visibility?: boolean; // Visibility state from the server.
-          overrideVisibility?: boolean; // Override from the GUI.
-        };
-  };
   nodeRefFromName: {
     [name: string]: undefined | THREE.Object3D;
   };
@@ -59,6 +48,7 @@ export type ViewerMutable = {
   skinnedMeshState: {
     [name: string]: {
       initialized: boolean;
+      dirty: boolean; // Flag to track if bones need updating.
       poses: {
         wxyz: [number, number, number, number];
         position: [number, number, number];
@@ -74,9 +64,16 @@ export type ViewerContextContents = {
   // Non-mutable state.
   messageSource: "websocket" | "file_playback";
 
-  // Zustand state hooks.
-  useSceneTree: UseSceneTree;
+  // Zustand state hooks and actions.
+  useSceneTree: UseSceneTree["store"];
+  sceneTreeActions: UseSceneTree["actions"];
+  useEnvironment: ReturnType<
+    typeof import("./EnvironmentState").useEnvironmentState
+  >;
   useGui: UseGui;
+  useDevSettings: ReturnType<
+    typeof import("./DevSettingsStore").useDevSettingsStore
+  >;
 
   // Single reference to all mutable state.
   mutable: React.MutableRefObject<ViewerMutable>;

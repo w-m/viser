@@ -87,11 +87,11 @@ export function PlaybackFromFile({ fileUrl }: { fileUrl: string }) {
   // Instead of removing all of the existing scene nodes, we're just going to hide them.
   // This will prevent unnecessary remounting when messages are looped.
   function resetScene() {
-    const attrs = viewerMutable.nodeAttributesFromName;
-    Object.keys(attrs).forEach((key) => {
+    const sceneTreeState = viewer.useSceneTree.getState();
+    Object.keys(sceneTreeState).forEach((key) => {
       if (key === "") return;
-      const nodeMessage =
-        viewer.useSceneTree.getState().nodeFromName[key]?.message;
+      const node = sceneTreeState[key];
+      const nodeMessage = node?.message;
       if (
         nodeMessage !== undefined &&
         (nodeMessage.type !== "FrameMessage" || nodeMessage.props.show_axes)
@@ -99,15 +99,18 @@ export function PlaybackFromFile({ fileUrl }: { fileUrl: string }) {
         // ^ We don't hide intermediate frames. These can be created
         // automatically by addSceneNodeMakerParents(), in which case there
         // will be no message to un-hide them.
-        attrs[key]!.visibility = false;
+        viewer.sceneTreeActions.updateNodeAttributes(key, {
+          visibility: false,
+          wxyz: [1, 0, 0, 0],
+          position: [0, 0, 0],
+        });
+      } else if (node !== undefined) {
+        // Still reset poses for frames.
+        viewer.sceneTreeActions.updateNodeAttributes(key, {
+          wxyz: [1, 0, 0, 0],
+          position: [0, 0, 0],
+        });
       }
-
-      // We'll also reset poses. This is to prevent edge cases when looping:
-      // - We first add /parent/child.
-      // - We then add /parent.
-      // - We then modify the pose of /parent.
-      attrs[key]!.wxyz = [1, 0, 0, 0];
-      attrs[key]!.position = [0, 0, 0];
     });
   }
 

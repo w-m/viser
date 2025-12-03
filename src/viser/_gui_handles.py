@@ -7,27 +7,23 @@ import time
 import uuid
 import warnings
 from collections.abc import Coroutine
-from functools import cached_property
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
-    Dict,
     Generic,
     Iterable,
     Literal,
     Tuple,
     TypeVar,
-    cast,
-    get_type_hints,
 )
 
 import imageio.v3 as iio
 import numpy as np
-from typing_extensions import Protocol
+from typing_extensions import Protocol, override
 
-from . import _messages
+from ._assignable_props_api import AssignablePropsBase
 from ._icons import svg_from_icon
 from ._icons_enum import IconName
 from ._messages import (
@@ -52,6 +48,8 @@ from ._messages import (
     GuiTabGroupProps,
     GuiTextProps,
     GuiUpdateMessage,
+    GuiUploadButtonProps,
+    GuiUplotProps,
     GuiVector2Props,
     GuiVector3Props,
 )
@@ -115,53 +113,12 @@ class _GuiHandleState(Generic[T]):
     removed: bool = False
 
 
-class _OverridableGuiPropApi:
-    """Mixin that allows reading/assigning properties defined in each scene node message."""
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name == "_impl":
-            return object.__setattr__(self, name, value)
-
-        # If it's a property with a setter, use the setter
-        prop = getattr(self.__class__, name, None)
-        if isinstance(prop, property) and prop.fset is not None:
-            prop.fset(self, value)
-            return
-
-        # Otherwise, look for the field in the general props struct.
-        handle = cast(_GuiInputHandle, self)
-        # Get the value of the T TypeVar.
-        if name in self._prop_hints:
-            if getattr(handle._impl.props, name) == value:
-                # Do nothing. Assumes equality is defined for the prop value.
-                return
-            setattr(handle._impl.props, name, value)
-            handle._impl.gui_api._websock_interface.queue_message(
-                _messages.GuiUpdateMessage(handle._impl.uuid, {name: value})
-            )
-        else:
-            return object.__setattr__(self, name, value)
-
-    def __getattr__(self, name: str) -> Any:
-        if name in self._prop_hints:
-            return getattr(self._impl.props, name)
-        else:
-            raise AttributeError(
-                f"'{self.__class__.__name__}' object has no attribute '{name}'"
-            )
-
-    @cached_property
-    def _prop_hints(self) -> Dict[str, Any]:
-        return get_type_hints(type(self._impl.props))
-
-
-class _GuiHandle(
-    Generic[T],
-    _OverridableGuiPropApi if not TYPE_CHECKING else object,
-):
-    # Let's shove private implementation details in here...
-    def __init__(self, _impl: _GuiHandleState[T]) -> None:
-        self._impl = _impl
+# Not exported for now because some GUI handles don't currently inhert from
+# `_GuiHandle`: notably `GuiModalHandle` and `GuiTabHandle`. These would fail
+# isinstance checks, which would be confusing!
+class _GuiHandle(Generic[T], AssignablePropsBase[_GuiHandleState]):
+    def __init__(self, impl: _GuiHandleState[T]) -> None:
+        super().__init__(impl=impl)
         parent = self._impl.gui_api._container_handle_from_uuid[
             self._impl.parent_container_id
         ]
@@ -169,6 +126,12 @@ class _GuiHandle(
 
         if isinstance(self, _GuiInputHandle):
             self._impl.gui_api._gui_input_handle_from_uuid[self._impl.uuid] = self
+
+    @override
+    def _queue_update(self, name: str, value: Any) -> None:
+        self._impl.gui_api._websock_interface.queue_message(
+            GuiUpdateMessage(self._impl.uuid, {name: value})
+        )
 
     def remove(self) -> None:
         """Permanently remove this GUI element from the visualizer."""
@@ -408,6 +371,20 @@ class GuiButtonHandle(_GuiInputHandle[bool], GuiButtonProps):
        Value of the button. Set to `True` when the button is pressed. Can be manually set back to `False`.
     """
 
+    def __init__(self, _impl: _GuiHandleState[bool], _icon: IconName | None):
+        super().__init__(impl=_impl)
+        self._icon = _icon
+
+    @property
+    def icon(self) -> IconName | None:
+        """Icon to display on the button. When set to None, no icon is displayed."""
+        return self._icon
+
+    @icon.setter
+    def icon(self, icon: IconName | None) -> None:
+        self._icon = icon
+        self._icon_html = None if icon is None else svg_from_icon(icon)
+
     def on_click(
         self: TGuiHandle, func: Callable[[GuiEvent[TGuiHandle]], NoneOrCoroutine]
     ) -> Callable[[GuiEvent[TGuiHandle]], NoneOrCoroutine]:
@@ -433,7 +410,7 @@ class UploadedFile:
     """Contents of the file."""
 
 
-class GuiUploadButtonHandle(_GuiInputHandle[UploadedFile]):
+class GuiUploadButtonHandle(_GuiInputHandle[UploadedFile], GuiUploadButtonProps):
     """Handle for an upload file button in our visualizer.
 
     The `.value` attribute will be updated with the contents of uploaded files.
@@ -443,6 +420,20 @@ class GuiUploadButtonHandle(_GuiInputHandle[UploadedFile]):
 
        Value of the input. Contains information about the uploaded file.
     """
+
+    def __init__(self, _impl: _GuiHandleState[UploadedFile], _icon: IconName | None):
+        super().__init__(impl=_impl)
+        self._icon = _icon
+
+    @property
+    def icon(self) -> IconName | None:
+        """Icon to display on the upload button. When set to None, no icon is displayed."""
+        return self._icon
+
+    @icon.setter
+    def icon(self, icon: IconName | None) -> None:
+        self._icon = icon
+        self._icon_html = None if icon is None else svg_from_icon(icon)
 
     def on_upload(
         self: TGuiHandle, func: Callable[[GuiEvent[TGuiHandle]], NoneOrCoroutine]
@@ -536,7 +527,7 @@ class GuiTabGroupHandle(_GuiHandle[None], GuiTabGroupProps):
     """Handle for a tab group. Call :meth:`add_tab()` to add a tab."""
 
     def __init__(self, _impl: _GuiHandleState[None]) -> None:
-        super().__init__(_impl=_impl)
+        super().__init__(impl=_impl)
         self._tab_handles: list[GuiTabHandle] = []
 
     def add_tab(self, label: str, icon: IconName | None = None) -> GuiTabHandle:
@@ -545,7 +536,7 @@ class GuiTabGroupHandle(_GuiHandle[None], GuiTabGroupProps):
         uuid = _make_uuid()
 
         # We may want to make this thread-safe in the future.
-        out = GuiTabHandle(_parent=self, _id=uuid)
+        out = GuiTabHandle(_parent=self, _id=uuid, _label=label, _icon=icon)
 
         self._tab_handles.append(out)
         self._tab_labels = self._tab_labels + (label,)
@@ -592,11 +583,28 @@ class GuiTabHandle:
 
     _parent: GuiTabGroupHandle
     _id: str  # Used as container ID of children.
+    _label: str
+    _icon: IconName | None
     _container_id_restore: str | None = None
     _children: dict[str, SupportsRemoveProtocol] = dataclasses.field(
         default_factory=dict
     )
     _removed: bool = False
+
+    @property
+    def icon(self) -> IconName | None:
+        """Icon to display on the tab. When set to None, no icon is displayed."""
+        return self._icon
+
+    @icon.setter
+    def icon(self, icon: IconName | None) -> None:
+        self._icon = icon
+        # Find the index of this tab in the parent's tab list.
+        tab_index = self._parent._tab_handles.index(self)
+        # Update the icon HTML in the parent's tuple.
+        icons_list = list(self._parent._tab_icons_html)
+        icons_list[tab_index] = None if icon is None else svg_from_icon(icon)
+        self._parent._tab_icons_html = tuple(icons_list)
 
     def __enter__(self) -> GuiTabHandle:
         self._container_id_restore = self._parent._impl.gui_api._get_container_uuid()
@@ -650,11 +658,11 @@ class GuiTabHandle:
         self._parent._impl.gui_api._container_handle_from_uuid.pop(self._id)
 
 
-class GuiFolderHandle(_GuiHandle, GuiFolderProps):
+class GuiFolderHandle(_GuiHandle[None], GuiFolderProps):
     """Use as a context to place GUI elements into a folder."""
 
     def __init__(self, _impl: _GuiHandleState[None]) -> None:
-        super().__init__(_impl=_impl)
+        super().__init__(impl=_impl)
         self._impl.gui_api._container_handle_from_uuid[self._impl.uuid] = self
         self._children = {}
         parent = self._impl.gui_api._container_handle_from_uuid[
@@ -752,9 +760,9 @@ def _get_data_url(url: str, image_root: Path | None) -> str:
         image_root = Path(__file__).parent
     try:
         image = iio.imread(image_root / url)
-        media_type, binary = _encode_image_binary(image, "png")
+        _, binary = _encode_image_binary(image, "png")
         url = base64.b64encode(binary).decode("utf-8")
-        return f"data:{media_type};base64,{url}"
+        return f"data:image/png;base64,{url}"
     except (IOError, FileNotFoundError):
         warnings.warn(
             f"Failed to read image {url}, with image_root set to {image_root}.",
@@ -782,7 +790,7 @@ class GuiMarkdownHandle(_GuiHandle[None], GuiMarkdownProps):
     """Handling for updating and removing markdown elements."""
 
     def __init__(self, _impl: _GuiHandleState, _content: str, _image_root: Path | None):
-        super().__init__(_impl=_impl)
+        super().__init__(impl=_impl)
         self._content = _content
         self._image_root = _image_root
 
@@ -806,7 +814,7 @@ class GuiPlotlyHandle(_GuiHandle[None], GuiPlotlyProps):
     """Handle for updating and removing Plotly figures."""
 
     def __init__(self, _impl: _GuiHandleState, _figure: go.Figure):
-        super().__init__(_impl=_impl)
+        super().__init__(impl=_impl)
         self._figure = _figure
 
     @property
@@ -824,6 +832,12 @@ class GuiPlotlyHandle(_GuiHandle[None], GuiPlotlyProps):
         self._plotly_json_str = json_str
 
 
+class GuiUplotHandle(_GuiHandle[None], GuiUplotProps):
+    """Handle for updating and removing Uplot figures."""
+
+    pass
+
+
 class GuiImageHandle(_GuiHandle[None], GuiImageProps):
     """Handle for updating and removing images."""
 
@@ -833,9 +847,10 @@ class GuiImageHandle(_GuiHandle[None], GuiImageProps):
         _image: np.ndarray,
         _jpeg_quality: int | None,
     ):
-        super().__init__(_impl=_impl)
+        super().__init__(impl=_impl)
         self._image = _image
         self._jpeg_quality = _jpeg_quality
+        self._user_format: Literal["auto", "jpeg", "png"] = "auto"  # Default if not set
 
     @property
     def image(self) -> np.ndarray:
@@ -846,8 +861,34 @@ class GuiImageHandle(_GuiHandle[None], GuiImageProps):
     @image.setter
     def image(self, image: np.ndarray) -> None:
         self._image = image
-        media_type, data = _encode_image_binary(
-            image, self.media_type, jpeg_quality=self._jpeg_quality
+        resolved_format, data = _encode_image_binary(
+            image, self._user_format, jpeg_quality=self._jpeg_quality
         )
+        self._format = resolved_format
         self._data = data
-        del media_type
+
+    @property
+    def format(self) -> Literal["auto", "jpeg", "png"]:
+        """Image format. 'auto' will use PNG for RGBA images and JPEG for RGB."""
+        return self._user_format
+
+    @format.setter
+    def format(self, value: Literal["auto", "jpeg", "png"]) -> None:
+        import warnings
+
+        # Skip if format isn't changing.
+        if self._user_format == value:
+            return
+
+        self._user_format = value
+
+        # Re-encode image.
+        if value == "jpeg" and self._image.shape[2] == 4:
+            warnings.warn(
+                "Converting RGBA image to JPEG will discard the alpha channel."
+            )
+        resolved_format, data = _encode_image_binary(
+            self._image, value, jpeg_quality=self._jpeg_quality
+        )
+        self._format = resolved_format
+        self._data = data

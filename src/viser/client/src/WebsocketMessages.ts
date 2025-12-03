@@ -15,10 +15,11 @@ export interface CameraFrustumMessage {
     scale: number;
     line_width: number;
     color: [number, number, number];
-    image_media_type: "image/jpeg" | "image/png" | null;
-    _image_data: Uint8Array | null;
+    _format: "jpeg" | "png";
+    _image_data: Uint8Array<ArrayBuffer> | null;
     cast_shadow: boolean;
-    receive_shadow: boolean;
+    receive_shadow: boolean | number;
+    variant: "wireframe" | "filled";
   };
 }
 /** GlTF message.
@@ -29,10 +30,10 @@ export interface GlbMessage {
   type: "GlbMessage";
   name: string;
   props: {
-    glb_data: Uint8Array;
+    glb_data: Uint8Array<ArrayBuffer>;
     scale: number;
     cast_shadow: boolean;
-    receive_shadow: boolean;
+    receive_shadow: boolean | number;
   };
 }
 /** Coordinate frame message.
@@ -61,8 +62,9 @@ export interface BatchedAxesMessage {
   type: "BatchedAxesMessage";
   name: string;
   props: {
-    batched_wxyzs: Uint8Array;
-    batched_positions: Uint8Array;
+    batched_wxyzs: Uint8Array<ArrayBuffer>;
+    batched_positions: Uint8Array<ArrayBuffer>;
+    batched_scales: Uint8Array<ArrayBuffer> | null;
     axes_length: number;
     axes_radius: number;
   };
@@ -77,8 +79,6 @@ export interface GridMessage {
   props: {
     width: number;
     height: number;
-    width_segments: number;
-    height_segments: number;
     plane: "xz" | "xy" | "yx" | "yz" | "zx" | "zy";
     cell_color: [number, number, number];
     cell_thickness: number;
@@ -86,6 +86,10 @@ export interface GridMessage {
     section_color: [number, number, number];
     section_thickness: number;
     section_size: number;
+    infinite_grid: boolean;
+    fade_distance: number;
+    fade_strength: number;
+    fade_from: "camera" | "origin";
     shadow_opacity: number;
   };
 }
@@ -96,7 +100,23 @@ export interface GridMessage {
 export interface LabelMessage {
   type: "LabelMessage";
   name: string;
-  props: { text: string };
+  props: {
+    text: string;
+    font_size_mode: "screen" | "scene";
+    font_screen_scale: number;
+    font_scene_height: number;
+    depth_test: boolean;
+    anchor:
+      | "top-left"
+      | "top-center"
+      | "top-right"
+      | "center-left"
+      | "center-center"
+      | "center-right"
+      | "bottom-left"
+      | "bottom-center"
+      | "bottom-right";
+  };
 }
 /** Add a 3D gui element to the scene.
  *
@@ -120,8 +140,8 @@ export interface PointCloudMessage {
   type: "PointCloudMessage";
   name: string;
   props: {
-    points: Uint8Array;
-    colors: Uint8Array;
+    points: Uint8Array<ArrayBuffer>;
+    colors: Uint8Array<ArrayBuffer>;
     point_size: number;
     point_shape: "square" | "diamond" | "circle" | "rounded" | "sparkle";
     precision: "float16" | "float32";
@@ -218,8 +238,8 @@ export interface MeshMessage {
   type: "MeshMessage";
   name: string;
   props: {
-    vertices: Uint8Array;
-    faces: Uint8Array;
+    vertices: Uint8Array<ArrayBuffer>;
+    faces: Uint8Array<ArrayBuffer>;
     color: [number, number, number];
     wireframe: boolean;
     opacity: number | null;
@@ -227,7 +247,46 @@ export interface MeshMessage {
     side: "front" | "back" | "double";
     material: "standard" | "toon3" | "toon5";
     cast_shadow: boolean;
-    receive_shadow: boolean;
+    receive_shadow: boolean | number;
+  };
+}
+/** Box message.
+ *
+ * (automatically generated)
+ */
+export interface BoxMessage {
+  type: "BoxMessage";
+  name: string;
+  props: {
+    dimensions: [number, number, number];
+    color: [number, number, number];
+    wireframe: boolean;
+    opacity: number | null;
+    flat_shading: boolean;
+    side: "front" | "back" | "double";
+    material: "standard" | "toon3" | "toon5";
+    cast_shadow: boolean;
+    receive_shadow: boolean | number;
+  };
+}
+/** Icosphere message.
+ *
+ * (automatically generated)
+ */
+export interface IcosphereMessage {
+  type: "IcosphereMessage";
+  name: string;
+  props: {
+    radius: number;
+    subdivisions: number;
+    color: [number, number, number];
+    wireframe: boolean;
+    opacity: number | null;
+    flat_shading: boolean;
+    side: "front" | "back" | "double";
+    material: "standard" | "toon3" | "toon5";
+    cast_shadow: boolean;
+    receive_shadow: boolean | number;
   };
 }
 /** Skinned mesh message.
@@ -238,8 +297,8 @@ export interface SkinnedMeshMessage {
   type: "SkinnedMeshMessage";
   name: string;
   props: {
-    vertices: Uint8Array;
-    faces: Uint8Array;
+    vertices: Uint8Array<ArrayBuffer>;
+    faces: Uint8Array<ArrayBuffer>;
     color: [number, number, number];
     wireframe: boolean;
     opacity: number | null;
@@ -247,11 +306,11 @@ export interface SkinnedMeshMessage {
     side: "front" | "back" | "double";
     material: "standard" | "toon3" | "toon5";
     cast_shadow: boolean;
-    receive_shadow: boolean;
-    bone_wxyzs: Uint8Array;
-    bone_positions: Uint8Array;
-    skin_indices: Uint8Array;
-    skin_weights: Uint8Array;
+    receive_shadow: boolean | number;
+    bone_wxyzs: Uint8Array<ArrayBuffer>;
+    bone_positions: Uint8Array<ArrayBuffer>;
+    skin_indices: Uint8Array<ArrayBuffer>;
+    skin_weights: Uint8Array<ArrayBuffer>;
   };
 }
 /** Message from server->client carrying batched meshes information.
@@ -262,12 +321,13 @@ export interface BatchedMeshesMessage {
   type: "BatchedMeshesMessage";
   name: string;
   props: {
-    batched_wxyzs: Uint8Array;
-    batched_positions: Uint8Array;
+    batched_wxyzs: Uint8Array<ArrayBuffer>;
+    batched_positions: Uint8Array<ArrayBuffer>;
+    batched_scales: Uint8Array<ArrayBuffer> | null;
     lod: "auto" | "off" | [number, number][];
-    vertices: Uint8Array;
-    faces: Uint8Array;
-    color: [number, number, number];
+    vertices: Uint8Array<ArrayBuffer>;
+    faces: Uint8Array<ArrayBuffer>;
+    batched_colors: Uint8Array<ArrayBuffer>;
     wireframe: boolean;
     opacity: number | null;
     flat_shading: boolean;
@@ -285,11 +345,11 @@ export interface BatchedGlbMessage {
   type: "BatchedGlbMessage";
   name: string;
   props: {
-    batched_wxyzs: Uint8Array;
-    batched_positions: Uint8Array;
+    batched_wxyzs: Uint8Array<ArrayBuffer>;
+    batched_positions: Uint8Array<ArrayBuffer>;
+    batched_scales: Uint8Array<ArrayBuffer> | null;
     lod: "auto" | "off" | [number, number][];
-    glb_data: Uint8Array;
-    scale: number;
+    glb_data: Uint8Array<ArrayBuffer>;
     cast_shadow: boolean;
     receive_shadow: boolean;
   };
@@ -323,12 +383,12 @@ export interface ImageMessage {
   type: "ImageMessage";
   name: string;
   props: {
-    media_type: "image/jpeg" | "image/png";
-    _data: Uint8Array;
+    _format: "jpeg" | "png";
+    _data: Uint8Array<ArrayBuffer>;
     render_width: number;
     render_height: number;
     cast_shadow: boolean;
-    receive_shadow: boolean;
+    receive_shadow: boolean | number;
   };
 }
 /** Message from server->client carrying line segments information.
@@ -338,7 +398,11 @@ export interface ImageMessage {
 export interface LineSegmentsMessage {
   type: "LineSegmentsMessage";
   name: string;
-  props: { points: Uint8Array; line_width: number; colors: Uint8Array };
+  props: {
+    points: Uint8Array<ArrayBuffer>;
+    line_width: number;
+    colors: Uint8Array<ArrayBuffer>;
+  };
 }
 /** Message from server->client carrying Catmull-Rom spline information.
  *
@@ -348,7 +412,7 @@ export interface CatmullRomSplineMessage {
   type: "CatmullRomSplineMessage";
   name: string;
   props: {
-    positions: [number, number, number][];
+    points: Uint8Array<ArrayBuffer>;
     curve_type: "centripetal" | "chordal" | "catmullrom";
     tension: number;
     closed: boolean;
@@ -365,8 +429,8 @@ export interface CubicBezierSplineMessage {
   type: "CubicBezierSplineMessage";
   name: string;
   props: {
-    positions: [number, number, number][];
-    control_points: [number, number, number][];
+    points: Uint8Array<ArrayBuffer>;
+    control_points: Uint8Array<ArrayBuffer>;
     line_width: number;
     color: [number, number, number];
     segments: number | null;
@@ -379,7 +443,7 @@ export interface CubicBezierSplineMessage {
 export interface GaussianSplatsMessage {
   type: "GaussianSplatsMessage";
   name: string;
-  props: { buffer: Uint8Array };
+  props: { buffer: Uint8Array<ArrayBuffer> };
 }
 /** Remove a particular node from the scene.
  *
@@ -471,6 +535,198 @@ export interface GuiPlotlyMessage {
     visible: boolean;
   };
 }
+/** GuiUplotMessage(uuid: 'str', container_uuid: 'str', props: 'GuiUplotProps')
+ *
+ * (automatically generated)
+ */
+export interface GuiUplotMessage {
+  type: "GuiUplotMessage";
+  uuid: string;
+  container_uuid: string;
+  props: {
+    order: number;
+    data: Uint8Array<ArrayBuffer>[];
+    mode: 1 | 2 | null;
+    title: string | null;
+    series: {
+      show?: boolean;
+      class?: string;
+      scale?: string;
+      auto?: boolean;
+      sorted?: 0 | 1 | -1;
+      spanGaps?: boolean;
+      gaps?: [number, number][] | never;
+      pxAlign?: number | boolean;
+      label?: string | never;
+      value?: string | never;
+      values?: never;
+      paths?: never;
+      points?: {
+        show?: boolean | never;
+        paths?: never;
+        filter?: number[] | null | never;
+        size?: number;
+        space?: number;
+        width?: number;
+        stroke?: string;
+        dash?: number[];
+        cap?: string;
+        fill?: string;
+      };
+      facets?: { scale: string; auto?: boolean; sorted?: 0 | 1 | -1 }[];
+      width?: number;
+      stroke?: string;
+      fill?: string;
+      fillTo?: number | never;
+      dash?: number[];
+      cap?: string;
+      alpha?: number;
+      idxs?: [number, number];
+      min?: number;
+      max?: number;
+    }[];
+    bands: { series: [number, number]; fill?: string; dir?: 1 | -1 }[] | null;
+    scales: {
+      [key: string]: {
+        time?: boolean;
+        auto?: boolean | never;
+        range?: [number | null, number | null] | never | any;
+        from?: string;
+        distr?: 1 | 2 | 3 | 4 | 100;
+        log?: 10 | 2;
+        clamp?: number | never;
+        asinh?: number;
+        fwd?: never;
+        bwd?: never;
+        min?: number;
+        max?: number;
+        dir?: 1 | -1;
+        ori?: 0 | 1;
+        key?: string;
+      };
+    } | null;
+    axes:
+      | {
+          show?: boolean;
+          scale?: string;
+          side?: 0 | 1 | 2 | 3;
+          size?: number | never;
+          gap?: number;
+          font?: string;
+          lineGap?: number;
+          stroke?: string;
+          label?: string | never;
+          labelSize?: number;
+          labelGap?: number;
+          labelFont?: string;
+          space?: number | never;
+          incrs?: number[] | never;
+          splits?: number[] | never;
+          filter?: never;
+          values?:
+            | (string | number | null)[]
+            | never
+            | string
+            | (string | number | null)[][];
+          rotate?: number | never;
+          align?: 1 | 2;
+          alignTo?: 1 | 2;
+          grid?: {
+            show?: boolean;
+            stroke?: string;
+            width?: number;
+            dash?: number[];
+            cap?: string;
+            filter?: never;
+          };
+          ticks?: {
+            show?: boolean;
+            stroke?: string;
+            width?: number;
+            dash?: number[];
+            cap?: string;
+            filter?: never;
+            size?: number;
+          };
+          border?: {
+            show?: boolean;
+            stroke?: string;
+            width?: number;
+            dash?: number[];
+            cap?: string;
+          };
+        }[]
+      | null;
+    legend: {
+      show?: boolean;
+      live?: boolean;
+      isolate?: boolean;
+      markers?: {
+        show?: boolean;
+        width?: number | never;
+        stroke?: string;
+        fill?: string;
+        dash?: string;
+      };
+      mount?: any;
+      idx?: number | null;
+      idxs?: (number | null)[];
+      values?: (string | never)[];
+    } | null;
+    cursor: {
+      show?: boolean;
+      x?: boolean;
+      y?: boolean;
+      left?: number;
+      top?: number;
+      idx?: number | null;
+      dataIdx?: never;
+      idxs?: (number | null)[];
+      move?: never;
+      points?: {
+        show?: boolean | never;
+        one?: boolean;
+        size?: number | never;
+        bbox?: never;
+        width?: number | never;
+        stroke?: string;
+        fill?: string;
+      };
+      bind?: {
+        mousedown?: never;
+        mouseup?: never;
+        click?: never;
+        dblclick?: never;
+        mousemove?: never;
+        mouseleave?: never;
+        mouseenter?: never;
+      };
+      drag?: {
+        setScale?: boolean;
+        x?: boolean;
+        y?: boolean;
+        dist?: number;
+        uni?: number;
+        click?: any;
+      };
+      sync?: {
+        key: string;
+        setSeries?: boolean;
+        scales?: [string | null, string | null];
+        match?: [never, never, any, any, never];
+        filters?: any;
+        values?: [number, number];
+      };
+      focus?: { prox: number; bias?: 0 | 1 | -1; dist?: any };
+      hover?: { prox?: number | null | any; bias?: 0 | 1 | -1; skip?: any[] };
+      lock?: boolean;
+      event?: never;
+    } | null;
+    focus: { alpha: number } | null;
+    aspect: number;
+    visible: boolean;
+  };
+}
 /** GuiImageMessage(uuid: 'str', container_uuid: 'str', props: 'GuiImageProps')
  *
  * (automatically generated)
@@ -482,8 +738,8 @@ export interface GuiImageMessage {
   props: {
     order: number;
     label: string | null;
-    _data: Uint8Array | null;
-    media_type: "image/jpeg" | "image/png";
+    _data: Uint8Array<ArrayBuffer> | null;
+    _format: "jpeg" | "png";
     visible: boolean;
   };
 }
@@ -818,7 +1074,7 @@ export interface NotificationMessage {
     body: string;
     loading: boolean;
     with_close_button: boolean;
-    auto_close: number | false;
+    auto_close_seconds: number | null;
     color:
       | "dark"
       | "gray"
@@ -865,7 +1121,8 @@ export interface ViewerCameraMessage {
 }
 /** Message for a raycast-like pointer in the scene.
  * origin is the viewing camera position, in world coordinates.
- * direction is the vector if a ray is projected from the camera through the clicked pixel,
+ * direction is the vector if a ray is projected from the camera through the
+ * clicked pixel,
  *
  *
  * (automatically generated)
@@ -1026,15 +1283,31 @@ export interface TransformControlsUpdateMessage {
   wxyz: [number, number, number, number];
   position: [number, number, number];
 }
+/** Client -> server message when a transform control drag starts.
+ *
+ * (automatically generated)
+ */
+export interface TransformControlsDragStartMessage {
+  type: "TransformControlsDragStartMessage";
+  name: string;
+}
+/** Client -> server message when a transform control drag ends.
+ *
+ * (automatically generated)
+ */
+export interface TransformControlsDragEndMessage {
+  type: "TransformControlsDragEndMessage";
+  name: string;
+}
 /** Message for rendering a background image.
  *
  * (automatically generated)
  */
 export interface BackgroundImageMessage {
   type: "BackgroundImageMessage";
-  media_type: "image/jpeg" | "image/png";
-  rgb_data: Uint8Array | null;
-  depth_data: Uint8Array | null;
+  format: "jpeg" | "png";
+  rgb_data: Uint8Array<ArrayBuffer> | null;
+  depth_data: Uint8Array<ArrayBuffer> | null;
 }
 /** Set the visibility of a particular node in the scene.
  *
@@ -1171,7 +1444,7 @@ export interface GetRenderRequestMessage {
  */
 export interface GetRenderResponseMessage {
   type: "GetRenderResponseMessage";
-  payload: Uint8Array;
+  payload: Uint8Array<ArrayBuffer>;
 }
 /** Signal that a file is about to be sent.
  *
@@ -1213,8 +1486,8 @@ export interface FileTransferPart {
   type: "FileTransferPart";
   source_component_uuid: string | null;
   transfer_uuid: string;
-  part: number;
-  content: Uint8Array;
+  part_index: number;
+  content: Uint8Array<ArrayBuffer>;
 }
 /** Send a file for clients to download or upload files from client.
  *
@@ -1274,6 +1547,8 @@ export type Message =
   | RectAreaLightMessage
   | SpotLightMessage
   | MeshMessage
+  | BoxMessage
+  | IcosphereMessage
   | SkinnedMeshMessage
   | BatchedMeshesMessage
   | BatchedGlbMessage
@@ -1289,6 +1564,7 @@ export type Message =
   | GuiHtmlMessage
   | GuiProgressBarMessage
   | GuiPlotlyMessage
+  | GuiUplotMessage
   | GuiImageMessage
   | GuiTabGroupMessage
   | GuiButtonMessage
@@ -1324,6 +1600,8 @@ export type Message =
   | SetOrientationMessage
   | SetPositionMessage
   | TransformControlsUpdateMessage
+  | TransformControlsDragStartMessage
+  | TransformControlsDragEndMessage
   | BackgroundImageMessage
   | SetSceneNodeVisibilityMessage
   | SetSceneNodeClickableMessage
@@ -1360,6 +1638,8 @@ export type SceneNodeMessage =
   | RectAreaLightMessage
   | SpotLightMessage
   | MeshMessage
+  | BoxMessage
+  | IcosphereMessage
   | SkinnedMeshMessage
   | BatchedMeshesMessage
   | BatchedGlbMessage
@@ -1375,6 +1655,7 @@ export type GuiComponentMessage =
   | GuiHtmlMessage
   | GuiProgressBarMessage
   | GuiPlotlyMessage
+  | GuiUplotMessage
   | GuiImageMessage
   | GuiTabGroupMessage
   | GuiButtonMessage
@@ -1397,6 +1678,7 @@ const typeSetSceneNodeMessage = new Set([
   "BatchedAxesMessage",
   "GridMessage",
   "LabelMessage",
+  "BatchedLabelsMessage",
   "Gui3DMessage",
   "PointCloudMessage",
   "DirectionalLightMessage",
@@ -1406,6 +1688,8 @@ const typeSetSceneNodeMessage = new Set([
   "RectAreaLightMessage",
   "SpotLightMessage",
   "MeshMessage",
+  "BoxMessage",
+  "IcosphereMessage",
   "SkinnedMeshMessage",
   "BatchedMeshesMessage",
   "BatchedGlbMessage",
@@ -1427,6 +1711,7 @@ const typeSetGuiComponentMessage = new Set([
   "GuiHtmlMessage",
   "GuiProgressBarMessage",
   "GuiPlotlyMessage",
+  "GuiUplotMessage",
   "GuiImageMessage",
   "GuiTabGroupMessage",
   "GuiButtonMessage",

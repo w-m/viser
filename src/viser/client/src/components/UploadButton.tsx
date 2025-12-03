@@ -8,7 +8,7 @@ import { ViewerContext, ViewerContextContents } from "../ViewerContext";
 import { IconCheck } from "@tabler/icons-react";
 import { notifications } from "@mantine/notifications";
 import { htmlIconWrapper } from "./ComponentStyles.css";
-import { toMantineColor } from "../ColorUtils";
+import { toMantineColor } from "./colorUtils";
 
 export default function UploadButtonComponent({
   uuid,
@@ -46,7 +46,7 @@ export default function UploadButtonComponent({
           fileUploadRef.current.value = fileUploadRef.current.defaultValue;
           fileUploadRef.current.click();
         }}
-        style={{ height: "2.125em" }}
+        style={{ height: "2em" }}
         disabled={disabled || isUploading}
         size="sm"
         leftSection={
@@ -170,7 +170,7 @@ function useFileUpload({
         type: "FileTransferPart",
         source_component_uuid: componentUuid,
         transfer_uuid: transferUuid,
-        part: i,
+        part_index: i,
         content: new Uint8Array(buffer),
       });
     }

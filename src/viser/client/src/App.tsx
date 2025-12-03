@@ -6,27 +6,29 @@ import "./index.css";
 
 import { useInView } from "react-intersection-observer";
 import { Notifications } from "@mantine/notifications";
-import { Environment, PerformanceMonitor, Stats, Bvh } from "@react-three/drei";
+import { Environment, PerformanceMonitor, Stats } from "@react-three/drei";
 import * as THREE from "three";
 import { Canvas, useThree, useFrame } from "@react-three/fiber";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo } from "react";
 import { ViewerMutable } from "./ViewerContext";
 import {
   Anchor,
   Box,
-  ColorSchemeScript,
+  Divider,
   Image,
   MantineProvider,
   Modal,
   Tooltip,
   createTheme,
+  useMantineColorScheme,
   useMantineTheme,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 
-// Local imports
+// Local imports.
 import { SynchronizedCameraControls } from "./CameraControls";
 import { SceneNodeThreeObject } from "./SceneTree";
+import { shallowArrayEqual } from "./utils/shallowArrayEqual";
 import { ViewerContext, ViewerContextContents } from "./ViewerContext";
 import ControlPanel from "./ControlPanel/ControlPanel";
 import { useGuiState } from "./ControlPanel/GuiState";
@@ -35,9 +37,10 @@ import { WebsocketMessageProducer } from "./WebsocketInterface";
 import { Titlebar } from "./Titlebar";
 import { ViserModal } from "./Modal";
 import { useSceneTreeState } from "./SceneTreeState";
-import { useThrottledMessageSender } from "./WebsocketFunctions";
+import { useEnvironmentState } from "./EnvironmentState";
+import { useDevSettingsStore } from "./DevSettingsStore";
+import { useThrottledMessageSender } from "./WebsocketUtils";
 import { rayToViserCoords } from "./WorldTransformUtils";
-import { ndcFromPointerXy, opencvXyFromPointerXy } from "./ClickUtils";
 import { theme } from "./AppTheme";
 import { FrameSynchronizedMessageHandler } from "./MessageHandler";
 import { PlaybackFromFile } from "./FilePlayback";
@@ -45,12 +48,50 @@ import { SplatRenderContext } from "./Splatting/GaussianSplats";
 import { BrowserWarning } from "./BrowserWarning";
 import { MacWindowWrapper } from "./MacWindowWrapper";
 import { CsmDirectionalLight } from "./CsmDirectionalLight";
-import { VISER_VERSION } from "./VersionInfo";
+import { VISER_VERSION, GITHUB_CONTRIBUTORS, Contributor } from "./VersionInfo";
+import { BatchedLabelManager } from "./BatchedLabelManager";
 
 // ======= Utility functions =======
 
+/** Turn a click event into a normalized device coordinate (NDC) vector.
+ * Normalizes click coordinates to be between -1 and 1, with (0, 0) being the center of the screen.
+ *
+ * Returns null if input is not valid.
+ */
+function ndcFromPointerXy(
+  viewer: ViewerContextContents,
+  xy: [number, number],
+): THREE.Vector2 | null {
+  const mouseVector = new THREE.Vector2();
+  mouseVector.x =
+    2 * ((xy[0] + 0.5) / viewer.mutable.current.canvas!.clientWidth) - 1;
+  mouseVector.y =
+    1 - 2 * ((xy[1] + 0.5) / viewer.mutable.current.canvas!.clientHeight);
+  return mouseVector.x < 1 &&
+    mouseVector.x > -1 &&
+    mouseVector.y < 1 &&
+    mouseVector.y > -1
+    ? mouseVector
+    : null;
+}
+
+/** Turn a click event to normalized OpenCV coordinate (NDC) vector.
+ * Normalizes click coordinates to be between (0, 0) as upper-left corner,
+ * and (1, 1) as lower-right corner, with (0.5, 0.5) being the center of the screen.
+ * Uses offsetX/Y, and clientWidth/Height to get the coordinates.
+ */
+function opencvXyFromPointerXy(
+  viewer: ViewerContextContents,
+  xy: [number, number],
+): THREE.Vector2 {
+  const mouseVector = new THREE.Vector2();
+  mouseVector.x = (xy[0] + 0.5) / viewer.mutable.current.canvas!.clientWidth;
+  mouseVector.y = (xy[1] + 0.5) / viewer.mutable.current.canvas!.clientHeight;
+  return mouseVector;
+}
+
 /** Gets default WebSocket server URL based on current window location. */
-const getDefaultServerFromUrl = () => {
+const getDefaultServerFromUrl = (): string => {
   let server = window.location.href;
   server = server.replace("http://", "ws://");
   server = server.replace("https://", "wss://");
@@ -60,7 +101,7 @@ const getDefaultServerFromUrl = () => {
 };
 
 /** Disables rendering when component is not in view. */
-const DisableRender = () => useFrame(() => null, 1000);
+const DisableRender = (): null => useFrame(() => null, 1000);
 
 // ======= Main component tree =======
 
@@ -87,8 +128,22 @@ export function Root() {
     </div>
   );
 
-  // If dummy window dimensions are specified, wrap content in MacWindowWrapper
+  // If dummy window dimensions are specified, wrap content in MacWindowWrapper.
   if (!dummyWindowParam) return content;
+
+  // Handle "fill" flag to make window full size
+  if (dummyWindowParam === "fill") {
+    return (
+      <MacWindowWrapper
+        title={dummyWindowTitle}
+        width={window.innerWidth}
+        height={window.innerHeight}
+        fill={true}
+      >
+        {content}
+      </MacWindowWrapper>
+    );
+  }
 
   const [width, height] = dummyWindowParam.split("x").map(Number);
   if (isNaN(width) || isNaN(height)) return content;
@@ -114,18 +169,9 @@ function ViewerRoot() {
   const searchParams = new URLSearchParams(window.location.search);
   const playbackPath = searchParams.get("playbackPath");
   const darkMode = searchParams.get("darkMode") !== null;
-  const showStats = searchParams.get("showStats") !== null;
 
   // Create a message source string.
   const messageSource = playbackPath === null ? "websocket" : "file_playback";
-
-  // Create a default quaternion for the world frame.
-  const defaultQuat = (() => {
-    const quat = new THREE.Quaternion().setFromEuler(
-      new THREE.Euler(Math.PI / 2, Math.PI, -Math.PI / 2),
-    );
-    return [quat.w, quat.x, quat.y, quat.z] as [number, number, number, number];
-  })();
 
   // Create a single ref with all mutable state.
   const nodeRefFromName = {};
@@ -150,11 +196,6 @@ function ViewerRoot() {
     cameraControl: null,
 
     // Scene management.
-    nodeAttributesFromName: {
-      "": {
-        wxyz: defaultQuat,
-      },
-    },
     nodeRefFromName,
 
     // Message and rendering state.
@@ -177,11 +218,23 @@ function ViewerRoot() {
     hoveredElementsCount: 0,
   });
 
+  // Create the scene tree state and extract store and actions.
+  const sceneTreeState = useSceneTreeState(mutable.current.nodeRefFromName);
+
+  // Create the environment state and extract store and actions.
+  const environmentState = useEnvironmentState();
+
+  // Create the dev settings store.
+  const devSettingsStore = useDevSettingsStore();
+
   // Create the context value with hooks and single ref.
   const viewer: ViewerContextContents = {
     messageSource,
-    useSceneTree: useSceneTreeState(mutable.current.nodeRefFromName),
+    useSceneTree: sceneTreeState.store,
+    sceneTreeActions: sceneTreeState.actions,
+    useEnvironment: environmentState,
     useGui: useGuiState(initialServer),
+    useDevSettings: devSettingsStore,
     mutable,
   };
 
@@ -195,7 +248,6 @@ function ViewerRoot() {
         {messageSource === "file_playback" && (
           <PlaybackFromFile fileUrl={playbackPath!} />
         )}
-        {showStats && <Stats className="stats-panel" />}
       </ViewerContents>
     </ViewerContext.Provider>
   );
@@ -210,6 +262,7 @@ function ViewerContents({ children }: { children: React.ReactNode }) {
   const colors = viewer.useGui((state) => state.theme.colors);
   const controlLayout = viewer.useGui((state) => state.theme.control_layout);
   const showLogo = viewer.useGui((state) => state.theme.show_logo);
+  const showStats = viewer.useDevSettings((state) => state.showStats);
   const { messageSource } = viewer;
 
   // Create Mantine theme with custom colors if provided.
@@ -223,15 +276,34 @@ function ViewerContents({ children }: { children: React.ReactNode }) {
       }),
     [colors],
   );
-
+  const canvases = useMemo(
+    () => (
+      <>
+        <Viewer2DCanvas />
+        <ViewerCanvas>
+          <FrameSynchronizedMessageHandler />
+        </ViewerCanvas>
+      </>
+    ),
+    [],
+  );
   return (
     <>
-      <ColorSchemeScript forceColorScheme={darkMode ? "dark" : "light"} />
       <MantineProvider
         theme={mantineTheme}
-        forceColorScheme={darkMode ? "dark" : "light"}
+        defaultColorScheme={darkMode ? "dark" : "light"}
+        colorSchemeManager={{
+          // Mock external color scheme manager. This prevents multiple Viser
+          // instances from affecting each others' color schemes.
+          get: (defaultValue) => defaultValue,
+          set: () => null,
+          subscribe: () => null,
+          unsubscribe: () => null,
+          clear: () => null,
+        }}
       >
         {children}
+        <ColorSchemeSetter darkMode={darkMode} />
         <NotificationsPanel />
         <BrowserWarning />
         <ViserModal />
@@ -263,10 +335,7 @@ function ViewerContents({ children }: { children: React.ReactNode }) {
                 height: "100%",
               })}
             >
-              <Viewer2DCanvas />
-              <ViewerCanvas>
-                <FrameSynchronizedMessageHandler />
-              </ViewerCanvas>
+              {canvases}
               {showLogo && messageSource === "websocket" && <ViserLogo />}
             </Box>
             {messageSource === "websocket" && (
@@ -274,9 +343,19 @@ function ViewerContents({ children }: { children: React.ReactNode }) {
             )}
           </Box>
         </Box>
+        {showStats && <Stats className="stats-panel" />}
       </MantineProvider>
     </>
   );
+}
+
+function ColorSchemeSetter(props: { darkMode: boolean }) {
+  const colorScheme = useMantineColorScheme();
+  // Update data attribute for color scheme.
+  useEffect(() => {
+    colorScheme.setColorScheme(props.darkMode ? "dark" : "light");
+  }, [props.darkMode]);
+  return null;
 }
 
 /**
@@ -310,7 +389,7 @@ function NotificationsPanel() {
  */
 function ViewerCanvas({ children }: { children: React.ReactNode }) {
   const viewer = React.useContext(ViewerContext)!;
-  const sendClickThrottled = useThrottledMessageSender(20);
+  const sendClickThrottled = useThrottledMessageSender(20).send;
   const theme = useMantineTheme();
   const { ref: inViewRef, inView } = useInView();
 
@@ -359,14 +438,14 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
     if (ndcFromPointerXy(viewer, pointerXy) === null) return;
     pointerInfo.dragEnd = pointerXy;
 
-    // Check if pointer moved enough to be considered a drag
+    // Check if pointer moved enough to be considered a drag.
     if (
       Math.abs(pointerInfo.dragEnd[0] - pointerInfo.dragStart[0]) <= 3 &&
       Math.abs(pointerInfo.dragEnd[1] - pointerInfo.dragStart[1]) <= 3
     )
       return;
 
-    // Draw selection rectangle if in rect-select mode
+    // Draw selection rectangle if in rect-select mode.
     if (pointerInfo.enabled === "rect-select") {
       const ctx = mutable.current.canvas2d!.getContext("2d")!;
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
@@ -407,6 +486,25 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
     pointerInfo.isDragging = false;
   };
 
+  const fixedDpr = viewer.useDevSettings((state) => state.fixedDpr);
+  const sceneContents = React.useMemo(
+    () => (
+      <>
+        <BackgroundImage />
+        <SceneContextSetter />
+        {memoizedCameraControls}
+        <SplatRenderContext>
+          <AdaptiveDpr />
+          {children}
+          <BatchedLabelManager>
+            <SceneNodeThreeObject name="" />
+          </BatchedLabelManager>
+        </SplatRenderContext>
+        <DefaultLights />
+      </>
+    ),
+    [children, memoizedCameraControls],
+  );
   return (
     <div
       ref={inViewRef}
@@ -421,19 +519,10 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         shadows
+        dpr={fixedDpr ?? undefined}
       >
-        <Bvh firstHitOnly>
-          {!inView && <DisableRender />}
-          <BackgroundImage />
-          <SceneContextSetter />
-          {memoizedCameraControls}
-          <SplatRenderContext>
-            <AdaptiveDpr />
-            {children}
-            <SceneNodeThreeObject name="" parent={null} />
-          </SplatRenderContext>
-          <DefaultLights />
-        </Bvh>
+        {!inView && <DisableRender />}
+        {sceneContents}
       </Canvas>
     </div>
   );
@@ -499,27 +588,19 @@ function sendRectSelectMessage(
  */
 function DefaultLights() {
   const viewer = React.useContext(ViewerContext)!;
-  const enableDefaultLights = viewer.useSceneTree(
+  const enableDefaultLights = viewer.useEnvironment(
     (state) => state.enableDefaultLights,
   );
-  const enableDefaultLightsShadows = viewer.useSceneTree(
+  const enableDefaultLightsShadows = viewer.useEnvironment(
     (state) => state.enableDefaultLightsShadows,
   );
-  const environmentMap = viewer.useSceneTree((state) => state.environmentMap);
+  const environmentMap = viewer.useEnvironment((state) => state.environmentMap);
 
-  // Track environment rotation state.
-  const [worldRotation, setWorldRotation] = useState(
-    viewer.mutable.current.nodeAttributesFromName[""]!.wxyz!,
+  // Get world rotation directly from scene tree state.
+  const worldRotation = viewer.useSceneTree(
+    (state) => state[""]?.wxyz ?? [1, 0, 0, 0],
+    shallowArrayEqual,
   );
-
-  // Update rotation when changed.
-  useFrame(() => {
-    const currentRotation =
-      viewer.mutable.current.nodeAttributesFromName[""]!.wxyz!;
-    if (currentRotation !== worldRotation) {
-      setWorldRotation(currentRotation);
-    }
-  });
 
   // Calculate environment map.
   const envMapNode = useMemo(() => {
@@ -592,18 +673,12 @@ function DefaultLights() {
   return (
     <>
       <CsmDirectionalLight
-        fade={true}
         lightIntensity={3.0}
         position={[-0.2, 1.0, -0.2]}
         cascades={3}
-        color={0xffffff}
-        maxFar={20}
-        mode="practical"
-        shadowBias={-0.0001}
         castShadow={enableDefaultLightsShadows}
       />
       <CsmDirectionalLight
-        color={0xffffff}
         lightIntensity={0.4}
         position={[0, -1, 0]}
         castShadow={false}
@@ -617,9 +692,11 @@ function DefaultLights() {
  * Adaptive DPR component for performance optimization.
  */
 function AdaptiveDpr() {
+  const viewer = React.useContext(ViewerContext)!;
   const setDpr = useThree((state) => state.setDpr);
+  const fixedDpr = viewer.useDevSettings((state) => state.fixedDpr);
 
-  return (
+  return fixedDpr !== null ? null : (
     <PerformanceMonitor
       factor={1.0}
       step={0.2}
@@ -702,7 +779,8 @@ function BackgroundImage() {
 
     float readDepth(sampler2D depthMap, vec2 coord) {
       vec4 rgbPacked = texture(depthMap, coord);
-      float depth = rgbPacked.r * 0.00255 + rgbPacked.g * 0.6528 + rgbPacked.b * 167.1168;
+      // Important: BGR format, because buffer was encoded using OpenCV.
+      float depth = rgbPacked.b * 0.00255 + rgbPacked.g * 0.6528 + rgbPacked.r * 167.1168;
       return depth;
     }
 
@@ -823,38 +901,57 @@ function ViserLogo() {
         onClose={closeAbout}
         withCloseButton={false}
         size="xl"
-        ta="center"
+        style={{ textAlign: "center" }}
+        trapFocus={false}
       >
-        <Box>
-          <p>Viser is a 3D visualization toolkit developed at UC Berkeley.</p>
-          <p>
-            <Anchor
-              href="https://github.com/nerfstudio-project/"
-              target="_blank"
-              fw="600"
-              style={{ "&:focus": { outline: "none" } }}
-            >
-              Nerfstudio
-            </Anchor>
-            &nbsp;&nbsp;&bull;&nbsp;&nbsp;
-            <Anchor
-              href="https://github.com/nerfstudio-project/viser"
-              target="_blank"
-              fw="600"
-              style={{ "&:focus": { outline: "none" } }}
-            >
-              GitHub
-            </Anchor>
-            &nbsp;&nbsp;&bull;&nbsp;&nbsp;
-            <Anchor
-              href="https://viser.studio/main"
-              target="_blank"
-              fw="600"
-              style={{ "&:focus": { outline: "none" } }}
-            >
-              Documentation
-            </Anchor>
-          </p>
+        <Box pt="lg" pb="xs">
+          Viser is a 3D visualization toolkit developed at UC Berkeley.
+        </Box>
+        <Box pb="lg">
+          <Anchor
+            href="https://viser.studio/main"
+            target="_blank"
+            style={{ fontWeight: "600" }}
+          >
+            Documentation
+          </Anchor>
+          &nbsp;&nbsp;&bull;&nbsp;&nbsp;
+          <Anchor
+            href="https://github.com/nerfstudio-project/viser"
+            target="_blank"
+            style={{ fontWeight: "600" }}
+          >
+            GitHub
+          </Anchor>
+        </Box>
+        <Divider />
+        <Box
+          style={{
+            textAlign: "left",
+            maxHeight: "120px",
+            overflowY: "auto",
+            lineHeight: "1",
+            fontSize: "0.8rem",
+            opacity: "0.75",
+          }}
+          px="md"
+          pt="sm"
+        >
+          Thanks to our contributors!{" "}
+          {GITHUB_CONTRIBUTORS.map(
+            (contributor: Contributor, index: number) => (
+              <span key={contributor.login}>
+                <Anchor
+                  href={contributor.html_url}
+                  target="_blank"
+                  style={{ textDecoration: "none", fontSize: "0.75rem" }}
+                >
+                  {contributor.login}
+                </Anchor>
+                {index < GITHUB_CONTRIBUTORS.length - 1 && ", "}
+              </span>
+            ),
+          )}
         </Box>
       </Modal>
     </>

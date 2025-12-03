@@ -95,19 +95,17 @@ export function disposeMaterial(material: AllPossibleThreeJSMaterials) {
  */
 export function createStandardMaterial(props: {
   material: "standard" | "toon3" | "toon5";
-  color: [number, number, number];
+  color?: [number, number, number];
   wireframe: boolean;
   opacity: number | null;
   flat_shading: boolean;
   side: "front" | "back" | "double";
 }): THREE.Material {
   const standardArgs = {
-    color: rgbToInt(props.color),
+    color: props.color === undefined ? 0xffffff : rgbToInt(props.color),
     wireframe: props.wireframe,
     transparent: props.opacity !== null,
     opacity: props.opacity ?? 1.0,
-    // Flat shading only makes sense for non-wireframe materials.
-    flatShading: props.flat_shading && !props.wireframe,
     side: {
       front: THREE.FrontSide,
       back: THREE.BackSide,
@@ -116,7 +114,11 @@ export function createStandardMaterial(props: {
   };
 
   if (props.material == "standard" || props.wireframe) {
-    return new THREE.MeshStandardMaterial(standardArgs);
+    return new THREE.MeshStandardMaterial({
+      // Flat shading only makes sense for standard + non-wireframe materials.
+      flatShading: props.flat_shading && !props.wireframe,
+      ...standardArgs,
+    });
   } else if (props.material == "toon3") {
     return new THREE.MeshToonMaterial({
       gradientMap: generateGradientMap(3),

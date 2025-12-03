@@ -1,9 +1,9 @@
-viser
+Viser
 =====
 
-|pyright| |nbsp| |typescript| |nbsp| |versions|
+|pyright| |nbsp| |typescript| |nbsp| |versions| |discord|
 
-**viser** is a library for interactive 3D visualization in Python.
+Viser is a 3D visualization library for computer vision and robotics in Python.
 
 Features include:
 
@@ -13,23 +13,53 @@ Features include:
 - Programmatic camera control and rendering
 - An entirely web-based client, for easy use over SSH!
 
-Installation
------------
+The goal is to provide primitives that are (1) easy for simple visualization tasks, but (2) can be composed into more elaborate interfaces. For more about design goals, see the `technical report <https://arxiv.org/abs/2507.22885>`_.
 
-You can install ``viser`` with ``pip``:
+Install with:
 
 .. code-block:: bash
 
    pip install viser
 
-To include example dependencies:
+Demo reel:
 
-.. code-block:: bash
+.. raw:: html
 
-   pip install viser[examples]
+   <video src="https://brentyi.github.io/viser-example-assets/viser_demos.mp4" controls playsinline width="100%"></video><section id="examples">
 
-After an example script is running, you can connect by navigating to the printed
-URL (default: ``http://localhost:8080``).
+
+
+Examples
+--------
+
+Install with: ``pip install viser[examples]``
+
+
+.. include:: examples/_example_gallery.rst
+
+
+.. toctree::
+   :caption: Examples
+   :hidden:
+   :maxdepth: 1
+   :titlesonly:
+
+   examples/getting_started/index
+   examples/scene/index
+   examples/gui/index
+   examples/interaction/index
+   examples/demos/index
+
+.. toctree::
+   :caption: API Reference
+   :hidden:
+   :maxdepth: 1
+   :titlesonly:
+
+   api/core/index
+   api/handles/index
+   api/advanced/index
+   api/auxiliary/index
 
 .. toctree::
    :caption: Notes
@@ -38,54 +68,10 @@ URL (default: ``http://localhost:8080``).
    :titlesonly:
 
    ./conventions.rst
+   ./performance_tips.rst
    ./development.rst
    ./embedded_visualizations.rst
-
-.. toctree::
-   :caption: API (Basics)
-   :hidden:
-   :maxdepth: 1
-   :titlesonly:
-
-   ./server.rst
-   ./scene_api.rst
-   ./gui_api.rst
-   ./state_serializer.rst
-
-
-.. toctree::
-   :caption: API (Advanced)
-   :hidden:
-   :maxdepth: 1
-   :titlesonly:
-
-   ./client_handles.rst
-   ./camera_handles.rst
-   ./gui_handles.rst
-   ./scene_handles.rst
-   ./events.rst
-   ./icons.rst
-
-
-.. toctree::
-   :caption: API (Auxiliary)
-   :hidden:
-   :maxdepth: 1
-   :titlesonly:
-
-   ./transforms.rst
-   ./infrastructure.rst
-   ./extras.rst
-
-.. toctree::
-   :caption: Examples
-   :hidden:
-   :maxdepth: 1
-   :titlesonly:
-   :glob:
-
-   examples/*
-
+   ./citation.rst
 
 .. |pyright| image:: https://github.com/nerfstudio-project/viser/actions/workflows/pyright.yml/badge.svg
    :alt: Pyright status icon
@@ -98,3 +84,6 @@ URL (default: ``http://localhost:8080``).
    :target: https://pypi.org/project/viser/
 .. |nbsp| unicode:: 0xA0
    :trim:
+.. |discord| image:: https://img.shields.io/discord/1423204924518432809?logo=discord&label=discord
+   :alt: Discord icon
+   :target: https://discord.gg/pnNTkHNUwP

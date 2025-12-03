@@ -7,6 +7,7 @@ import numpy as np
 from typing_extensions import (
     Annotated,
     Literal,
+    Never,
     NotRequired,
     get_args,
     get_origin,
@@ -27,10 +28,11 @@ _raw_type_mapping = {
     int: "number",
     str: "string",
     # For numpy arrays, we directly serialize the underlying data buffer.
-    np.ndarray: "Uint8Array",
-    bytes: "Uint8Array",
+    np.ndarray: "Uint8Array<ArrayBuffer>",
+    bytes: "Uint8Array<ArrayBuffer>",
     Any: "any",
     None: "null",
+    Never: "never",
     type(None): "null",
 }
 

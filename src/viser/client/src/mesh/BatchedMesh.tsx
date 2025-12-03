@@ -11,20 +11,17 @@ import { BatchedMeshBase } from "./BatchedMeshBase";
  */
 export const BatchedMesh = React.forwardRef<
   InstancedMesh2,
-  BatchedMeshesMessage
->(function BatchedMesh(message, ref) {
+  BatchedMeshesMessage & { children?: React.ReactNode }
+>(function BatchedMesh({ children, ...message }, ref) {
   const viewer = React.useContext(ViewerContext)!;
   const clickable =
-    viewer.useSceneTree(
-      (state) => state.nodeFromName[message.name]?.clickable,
-    ) ?? false;
+    viewer.useSceneTree((state) => state[message.name]?.clickable) ?? false;
 
   // Create a material based on the message props.
   const material = useMemo(() => {
     // Create the material with properties from the message.
     const mat = createStandardMaterial({
       material: message.props.material,
-      color: message.props.color,
       wireframe: message.props.wireframe,
       opacity: message.props.opacity,
       flat_shading: message.props.flat_shading,
@@ -39,7 +36,6 @@ export const BatchedMesh = React.forwardRef<
     return mat;
   }, [
     message.props.material,
-    message.props.color,
     message.props.wireframe,
     message.props.opacity,
     message.props.flat_shading,
@@ -79,16 +75,20 @@ export const BatchedMesh = React.forwardRef<
   }, [message.props.vertices.buffer, message.props.faces.buffer]);
 
   return (
-    <BatchedMeshBase
-      ref={ref}
-      geometry={geometry}
-      material={material}
-      batched_positions={message.props.batched_positions}
-      batched_wxyzs={message.props.batched_wxyzs}
-      lod={message.props.lod}
-      cast_shadow={message.props.cast_shadow}
-      receive_shadow={message.props.receive_shadow}
-      clickable={clickable}
-    />
+    <group ref={ref}>
+      <BatchedMeshBase
+        geometry={geometry}
+        material={material}
+        batched_positions={message.props.batched_positions}
+        batched_wxyzs={message.props.batched_wxyzs}
+        batched_scales={message.props.batched_scales}
+        batched_colors={message.props.batched_colors}
+        lod={message.props.lod}
+        cast_shadow={message.props.cast_shadow}
+        receive_shadow={message.props.receive_shadow}
+        clickable={clickable}
+      />
+      {children}
+    </group>
   );
 });

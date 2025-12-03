@@ -33,6 +33,7 @@ function collectArrayBuffers(obj: any, buffers: Set<ArrayBufferLike>) {
   }
   return buffers;
 }
+
 {
   let server: string | null = null;
   let ws: WebSocket | null = null;
@@ -103,28 +104,85 @@ function collectArrayBuffers(obj: any, buffers: Set<ArrayBufferLike>) {
       }
     };
 
+    // State for tracking message timing.
+    const state: {
+      prevPythonTimestampMs?: number;
+      lastIdealJsMs?: number;
+      jsTimeMinusPythonTime: number;
+    } = { jsTimeMinusPythonTime: Infinity };
+    type SerializedStruct = {
+      messages: Message[];
+      timestampSec: number;
+    };
+
     ws.onmessage = async (event) => {
-      // Reduce websocket backpressure.
-      const messagePromise = new Promise<Message[]>((resolve) => {
+      const dataPromise = new Promise<SerializedStruct>((resolve) => {
         (event.data.arrayBuffer() as Promise<ArrayBuffer>).then((buffer) => {
-          resolve(decode(new Uint8Array(buffer)) as Message[]);
+          resolve(decode(new Uint8Array(buffer)) as SerializedStruct);
         });
       });
 
-      // Try our best to handle messages in order. If this takes more than 1 second, we give up. :)
-      await orderLock.acquireAsync({ timeout: 1000 }).catch(() => {
+      // Try our best to handle messages in order. If this takes more than 10 seconds, we give up. :)
+      const jsReceivedMs = performance.now();
+      await orderLock.acquireAsync({ timeout: 10000 }).catch(() => {
         console.log("Order lock timed out.");
         orderLock.release();
       });
-      try {
-        const messages = await messagePromise;
-        const arrayBuffers = collectArrayBuffers(messages, new Set());
+      const data = await dataPromise;
+
+      // Compute offset between JavaScript and Python time.
+      state.jsTimeMinusPythonTime = Math.min(
+        jsReceivedMs - data.timestampSec * 1000,
+        state.jsTimeMinusPythonTime,
+      );
+
+      // Function to send the message and release the order lock.
+      const messages = data.messages;
+      const arrayBuffers = collectArrayBuffers(messages, new Set());
+      const sendFn = () => {
         postOutgoing(
           { type: "message_batch", messages: messages },
           Array.from(arrayBuffers),
         );
-      } finally {
-        orderLock.acquired && orderLock.release();
+        orderLock.release();
+      };
+
+      // Calculate timing deltas between Python and JavaScript.
+      const jsNowMs = performance.now();
+      const currentPythonTimestampMs = data.timestampSec * 1000;
+      const pythonTimeDeltaMs =
+        currentPythonTimestampMs -
+        (state.prevPythonTimestampMs ?? currentPythonTimestampMs);
+      state.prevPythonTimestampMs = currentPythonTimestampMs;
+
+      if (
+        // Flush immediately for first message.
+        state.lastIdealJsMs === undefined ||
+        // Flush immediately if the Python delta is large, in this case we're
+        // probably not sensitive to exact timing.
+        pythonTimeDeltaMs > 100 ||
+        // Flush if we're more than 100ms behind real-time.
+        jsNowMs - state.jsTimeMinusPythonTime - currentPythonTimestampMs > 100
+      ) {
+        // First message or no expected delta, send immediately.
+        sendFn();
+        state.lastIdealJsMs = jsNowMs;
+      } else {
+        // For messages that are being sent frequently: smooth out the sending rate.
+        const idealNextSendTimeMs = state.lastIdealJsMs + pythonTimeDeltaMs;
+        const timeUntilIdealJsMs = idealNextSendTimeMs - jsNowMs;
+
+        if (timeUntilIdealJsMs > 3) {
+          // We're early! This means the previous message was processed late...
+          const dampingFactor = 0.95;
+          setTimeout(sendFn, timeUntilIdealJsMs * dampingFactor);
+          state.lastIdealJsMs =
+            state.lastIdealJsMs + pythonTimeDeltaMs * dampingFactor;
+        } else {
+          // Message is on-time or late: send immediately.
+          sendFn();
+          state.lastIdealJsMs = jsNowMs;
+        }
       }
     };
   };

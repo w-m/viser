@@ -7,6 +7,7 @@
 # http://www.sphinx-doc.org/en/stable/config
 
 import os
+from pathlib import Path
 from typing import Dict, List
 
 import viser
@@ -20,8 +21,8 @@ import viser
 
 # -- Project information -----------------------------------------------------
 
-project = "viser"
-copyright = "2024"
+project = "Viser"
+copyright = "2025"
 author = "brentyi"
 
 version: str = os.environ.get("VISER_VERSION_STR_OVERRIDE", viser.__version__)
@@ -52,14 +53,29 @@ extensions = [
     "sphinx.ext.mathjax",
     "sphinx.ext.githubpages",
     "sphinx.ext.napoleon",
+    "sphinx.ext.intersphinx",
     # "sphinx.ext.inheritance_diagram",
     "sphinx.ext.viewcode",
     "sphinxcontrib.programoutput",
     "sphinxcontrib.ansi",
     "sphinxcontrib.googleanalytics",  # google analytics extension https://github.com/sphinx-contrib/googleanalytics/tree/master
+    "sphinx_copybutton",  # adds copy buttons to code blocks
 ]
 programoutput_use_ansi = True
 html_ansi_stylesheet = "black-on-white.css"
+
+# -- Options for sphinx-copybutton extension ---------------------------------
+copybutton_prompt_text = r">>> |\.\.\. |\$ |In \[\d*\]: | {2,5}\.\.\.: | {5,8}: "
+copybutton_prompt_is_regexp = True
+copybutton_only_copy_prompt_lines = True
+copybutton_remove_prompts = True
+copybutton_copy_empty_lines = False
+
+# Intersphinx mapping for cross-references to external documentation
+intersphinx_mapping = {
+    "python": ("https://docs.python.org/3", (None, "python-inv.txt"))
+}
+
 html_static_path = ["_static"]
 html_theme_options = {
     "light_css_variables": {
@@ -235,8 +251,98 @@ todo_include_todos = True
 # -- Setup function ----------------------------------------
 
 
+def skip_dict_methods(app, what, name, obj, skip, options):
+    """Skip inherited dict methods when documenting TypedDict classes."""
+    # List of dict methods to exclude from TypedDict documentation
+    dict_methods = {
+        "__new__",
+        "__init__",
+        "__delitem__",
+        "__getitem__",
+        "__iter__",
+        "__len__",
+        "__setitem__",
+        "clear",
+        "copy",
+        "fromkeys",
+        "get",
+        "items",
+        "keys",
+        "pop",
+        "popitem",
+        "setdefault",
+        "update",
+        "values",
+        "__contains__",
+        "__delattr__",
+        "__dir__",
+        "__eq__",
+        "__format__",
+        "__ge__",
+        "__getattribute__",
+        "__gt__",
+        "__hash__",
+        "__le__",
+        "__lt__",
+        "__ne__",
+        "__reduce__",
+        "__reduce_ex__",
+        "__repr__",
+        "__setattr__",
+        "__sizeof__",
+        "__str__",
+        "__subclasshook__",
+    }
+
+    if what == "class" and name in dict_methods:
+        return True
+    return skip
+
+
+def process_git_clone_commands():
+    """Replace git clone commands in RST files with version-aware ones when VISER_RELEASE_WORKFLOW_VERSION is set."""
+    version_override = os.environ.get("VISER_RELEASE_WORKFLOW_VERSION", None)
+    if version_override is None:
+        return  # Only process when version override is set.
+
+    # Add 'v' prefix if not already present.
+    tag_version = (
+        version_override if version_override.startswith("v") else f"v{version_override}"
+    )
+    versioned_git_clone = (
+        f"git clone -b {tag_version} https://github.com/nerfstudio-project/viser.git"
+    )
+
+    # Find and replace in all RST files under examples.
+    docs_source = Path(__file__).parent
+    examples_dir = docs_source / "examples"
+
+    if examples_dir.exists():
+        for rst_file in examples_dir.rglob("*.rst"):
+            if not rst_file.is_file():
+                continue
+            try:
+                content = rst_file.read_text(encoding="utf-8")
+                if (
+                    "git clone https://github.com/nerfstudio-project/viser.git"
+                    in content
+                ):
+                    updated_content = content.replace(
+                        "git clone https://github.com/nerfstudio-project/viser.git",
+                        versioned_git_clone,
+                    )
+                    rst_file.write_text(updated_content, encoding="utf-8")
+                    print(f"Updated git clone command in {rst_file}")
+            except Exception as e:
+                print(f"Error processing {rst_file}: {e}")
+
+
 def setup(app):
     app.add_css_file("css/custom.css")
+    app.connect("autodoc-skip-member", skip_dict_methods)
+
+    # Process git clone commands after the build starts.
+    process_git_clone_commands()
 
 
 # -- Napoleon settings -------------------------------------------------------

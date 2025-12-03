@@ -31,8 +31,9 @@ from typing_extensions import (
 )
 
 from viser import theme
+from viser._backwards_compat_shims import deprecated_positional_shim
 
-from . import _messages
+from . import _messages, uplot
 from ._gui_handles import (
     GuiButtonGroupHandle,
     GuiButtonHandle,
@@ -55,6 +56,7 @@ from ._gui_handles import (
     GuiTabGroupHandle,
     GuiTextHandle,
     GuiUploadButtonHandle,
+    GuiUplotHandle,
     GuiVector2Handle,
     GuiVector3Handle,
     SupportsRemoveProtocol,
@@ -245,12 +247,15 @@ class GuiApi:
             # when we expect tuples but the Javascript side gives us lists.
             if prop_name == "value":
                 if isinstance(handle_state.value, tuple):
-                    # We currently assume all tuple types have length >0, and
-                    # contents are all the same type.
-                    assert len(handle_state.value) > 0
-                    typ = type(handle_state.value[0])
-                    assert all([type(x) == typ for x in handle_state.value])
-                    prop_value = tuple([typ(new) for new in prop_value])
+                    if len(handle_state.value) > 0:
+                        # We currently assume non-empty tuple types have length
+                        # greater than 0, and contents are all the same type.
+                        typ = type(handle_state.value[0])
+                        assert all([type(x) == typ for x in handle_state.value])
+                        prop_value = tuple([typ(new) for new in prop_value])
+                    else:
+                        # Empty tuple.
+                        prop_value = tuple(prop_value)
                 else:
                     prop_value = type(handle_state.value)(prop_value)
 
@@ -314,7 +319,7 @@ class GuiApi:
         assert message.source_component_uuid in self._gui_input_handle_from_uuid
 
         state = self._current_file_upload_states[message.transfer_uuid]
-        state["parts"][message.part] = message.content
+        state["parts"][message.part_index] = message.content
         total_bytes = state["total_bytes"]
 
         with state["lock"]:
@@ -455,7 +460,7 @@ class GuiApi:
                 )
                 colors_cast = cast(
                     LengthTenStrTuple,
-                    tuple(_hex_from_hls(h, ls[i], s) for i in range(10)),
+                    tuple(_hex_from_hls(h, float(ls[i]), s) for i in range(10)),
                 )
 
         assert colors_cast is None or all(
@@ -474,9 +479,11 @@ class GuiApi:
             ),
         )
 
+    @deprecated_positional_shim
     def add_folder(
         self,
         label: str,
+        *,
         order: float | None = None,
         expand_by_default: bool = True,
         visible: bool = True,
@@ -518,9 +525,11 @@ class GuiApi:
             )
         )
 
+    @deprecated_positional_shim
     def add_modal(
         self,
         title: str,
+        *,
         order: float | None = None,
     ) -> GuiModalHandle:
         """Show a modal window, which can be useful for popups and messages, then return
@@ -547,8 +556,10 @@ class GuiApi:
             _uuid=modal_container_id,
         )
 
+    @deprecated_positional_shim
     def add_tab_group(
         self,
+        *,
         order: float | None = None,
         visible: bool = True,
     ) -> GuiTabGroupHandle:
@@ -586,9 +597,11 @@ class GuiApi:
             )
         )
 
+    @deprecated_positional_shim
     def add_markdown(
         self,
         content: str,
+        *,
         image_root: Path | None = None,
         order: float | None = None,
         visible: bool = True,
@@ -632,9 +645,11 @@ class GuiApi:
         handle.content = content
         return handle
 
+    @deprecated_positional_shim
     def add_html(
         self,
         content: str,
+        *,
         order: float | None = None,
         visible: bool = True,
     ) -> GuiHtmlHandle:
@@ -670,22 +685,43 @@ class GuiApi:
         )
         return handle
 
+    @deprecated_positional_shim
     def add_image(
         self,
         image: np.ndarray,
+        *,
         label: str | None = None,
-        format: Literal["png", "jpeg"] = "jpeg",
+        format: Literal["auto", "png", "jpeg"] = "auto",
         jpeg_quality: int | None = None,
         order: float | None = None,
         visible: bool = True,
     ) -> GuiImageHandle:
+        """Add an image element to the GUI.
+
+        Args:
+            image: A numpy array representing the image to display.
+            label: Label to display on the image element.
+            format: Format to transport and display the image using. 'auto' will use PNG for RGBA images and JPEG for RGB.
+            jpeg_quality: Quality of the jpeg image (if jpeg format is used).
+            order: Order of the element for sorting.
+            visible: Whether the image element is visible initially.
+
+        Returns:
+            Handle for manipulating the image element.
+        """
+        # Resolve format if auto.
+        if format == "auto":
+            resolved_format = "png" if image.shape[2] == 4 else "jpeg"
+        else:
+            resolved_format = format
+
         message = _messages.GuiImageMessage(
             uuid=_make_uuid(),
             container_uuid=self._get_container_uuid(),
             props=_messages.GuiImageProps(
                 _data=None,  # Sent in prop update later.
                 label=label,
-                media_type="image/png" if format == "png" else "image/jpeg",
+                _format=resolved_format,
                 order=_apply_default_order(order),
                 visible=visible,
             ),
@@ -703,18 +739,25 @@ class GuiApi:
             _image=image,
             _jpeg_quality=jpeg_quality,
         )
+        handle._user_format = format
         handle.image = image
         return handle
 
+    @deprecated_positional_shim
     def add_plotly(
         self,
         figure: go.Figure,
+        *,
         aspect: float = 1.0,
         order: float | None = None,
         visible: bool = True,
     ) -> GuiPlotlyHandle:
         """Add a Plotly figure to the GUI. Requires the `plotly` package to be
         installed.
+
+        .. note::
+           Updates to Plotly figures can be slow when you have many plots or frequent updates. For real-time visualization, consider using
+           :meth:`add_uplot` instead.
 
         Args:
             figure: Plotly figure to display.
@@ -784,9 +827,138 @@ class GuiApi:
         handle.aspect = aspect
         return handle
 
+    @deprecated_positional_shim
+    def add_uplot(
+        self,
+        data: tuple[np.ndarray, ...],
+        series: tuple[uplot.Series, ...],
+        *,
+        mode: Literal[1, 2] | None = None,
+        title: str | None = None,
+        bands: tuple[uplot.Band, ...] | None = None,
+        scales: dict[str, uplot.Scale] | None = None,
+        axes: tuple[uplot.Axis, ...] | None = None,
+        legend: uplot.Legend | None = None,
+        cursor: uplot.Cursor | None = None,
+        focus: uplot.Focus | None = None,
+        aspect: float = 1.0,
+        order: float | None = None,
+        visible: bool = True,
+    ) -> GuiUplotHandle:
+        """Add a uPlot chart to the GUI for high-performance time-series visualization.
+
+        uPlot is optimized for plotting large datasets with smooth pan/zoom interactions.
+        All configuration options follow the standard uPlot API. For comprehensive
+        documentation, see: https://github.com/leeoniya/uPlot/tree/1.6.32/docs
+
+        .. note::
+           Configuration types are exposed under the :mod:`viser.uplot` module for convenience:
+           :class:`viser.uplot.Series`, :class:`viser.uplot.Scale`, :class:`viser.uplot.Axis`,
+           :class:`viser.uplot.Band`, :class:`viser.uplot.Legend`, :class:`viser.uplot.Cursor`,
+           and :class:`viser.uplot.Focus`. These are :py:class:`~typing.TypedDict` types;
+           standard dictionaries can also be used.
+
+        Args:
+            data: Tuple of 1D numpy arrays containing chart data. The first array provides
+                x-axis values, and subsequent arrays contain y-axis data for
+                each series. All arrays must have identical length. Minimum 2
+                arrays.
+            series: Series configuration objects defining visual appearance and behavior.
+                Must match the length of data tuple.
+            mode: Chart layout mode. 1 = aligned (default) where all series share axes,
+                2 = faceted where each series gets its own subplot panel.
+            title: Chart title displayed at the top.
+            bands: High/low range visualizations between data series. Useful for showing
+                confidence intervals, error bounds, or min/max ranges. Each band connects
+                two adjacent series indices.
+            scales: Scale definitions controlling data-to-pixel mapping and axis ranges.
+                Key features include auto-ranging, manual min/max, time-based scaling,
+                and logarithmic distributions. Multiple scales enable dual-axis charts.
+            axes: Axis configuration for labels, ticks, grids, and positioning.
+                Controls which side axes appear (top/right/bottom/left), tick formatting,
+                grid line styling, and spacing between tick marks.
+            legend: Legend display options including positioning, styling, and custom
+                value formatting functions for hover states.
+            cursor: Interactive cursor behavior including hover proximity detection,
+                drag-to-zoom, and crosshair appearance. Controls how users interact
+                with the chart through mouse/touch.
+            focus: Visual highlighting when hovering over series. Controls the alpha
+                transparency of non-focused series to emphasize the active one.
+            aspect: Width-to-height ratio for the chart display in the control panel.
+                1.0 creates a square chart, values > 1.0 create wider charts.
+            order: Display ordering relative to other GUI elements (lower values first).
+            visible: Whether the chart is visible in the interface.
+
+        Returns:
+            A handle for programmatically updating chart properties and data.
+        """
+
+        # Validate data structure
+        assert len(data) >= 2, (
+            "data must have at least 2 arrays (x-data + at least one y-data series)"
+        )
+        assert all(isinstance(arr, np.ndarray) for arr in data), (
+            "all data elements must be numpy arrays"
+        )
+
+        # Validate data dimensions and shapes
+        for i, arr in enumerate(data):
+            assert arr.ndim == 1, f"data[{i}] must be a 1D array, got shape {arr.shape}"
+
+        # Check that all arrays have the same length
+        lengths = [len(arr) for arr in data]
+        if not all(length == lengths[0] for length in lengths):
+            raise ValueError(
+                f"All data arrays must have the same length. Got lengths: {lengths}"
+            )
+
+        # Validate series configuration
+        assert len(series) > 0, "series must not be empty"
+        if len(series) != len(data):
+            raise ValueError(
+                f"Length of series ({len(series)}) must match length of data ({len(data)}). "
+                f"Each array in data needs a corresponding series configuration."
+            )
+
+        # Convert arrays to float64 as expected by GuiUplotProps
+        data_float64 = tuple(arr.astype(np.float64) for arr in data)
+
+        message = _messages.GuiUplotMessage(
+            uuid=_make_uuid(),
+            container_uuid=self._get_container_uuid(),
+            props=_messages.GuiUplotProps(
+                order=_apply_default_order(order),
+                data=data_float64,
+                mode=mode,
+                title=title,
+                series=series,
+                bands=bands,
+                scales=scales,
+                axes=axes,
+                legend=legend,
+                cursor=cursor,
+                focus=focus,
+                aspect=aspect,
+                visible=visible,
+            ),
+        )
+        self._websock_interface.queue_message(message)
+
+        return GuiUplotHandle(
+            _GuiHandleState(
+                message.uuid,
+                self,
+                value=None,
+                props=message.props,
+                parent_container_id=message.container_uuid,
+            ),
+        )
+
+    @deprecated_positional_shim
     def add_button(
         self,
         label: str,
+        *,
         disabled: bool = False,
         visible: bool = True,
         hint: str | None = None,
@@ -831,12 +1003,15 @@ class GuiApi:
                     ),
                 ),
                 is_button=True,
-            )
+            ),
+            _icon=icon,
         )
 
+    @deprecated_positional_shim
     def add_upload_button(
         self,
         label: str,
+        *,
         disabled: bool = False,
         visible: bool = True,
         hint: str | None = None,
@@ -883,15 +1058,18 @@ class GuiApi:
                     ),
                 ),
                 is_button=True,
-            )
+            ),
+            _icon=icon,
         )
 
+    @deprecated_positional_shim
     def add_button_group(
         self,
         label: str,
         options: Sequence[str],
-        visible: bool = True,
+        *,
         disabled: bool = False,
+        visible: bool = True,
         hint: str | None = None,
         order: float | None = None,
     ) -> GuiButtonGroupHandle:
@@ -900,8 +1078,8 @@ class GuiApi:
         Args:
             label: Label to display on the button group.
             options: Sequence of options to display as buttons.
-            visible: Whether the button group is visible.
             disabled: Whether the button group is disabled.
+            visible: Whether the button group is visible.
             hint: Optional hint to display on hover.
             order: Optional ordering, smallest values will be displayed first.
 
@@ -931,10 +1109,12 @@ class GuiApi:
             ),
         )
 
+    @deprecated_positional_shim
     def add_checkbox(
         self,
         label: str,
         initial_value: bool,
+        *,
         disabled: bool = False,
         visible: bool = True,
         hint: str | None = None,
@@ -975,10 +1155,12 @@ class GuiApi:
             )
         )
 
+    @deprecated_positional_shim
     def add_text(
         self,
         label: str,
         initial_value: str,
+        *,
         multiline: bool = False,
         disabled: bool = False,
         visible: bool = True,
@@ -1023,10 +1205,12 @@ class GuiApi:
             )
         )
 
+    @deprecated_positional_shim
     def add_number(
         self,
         label: str,
         initial_value: IntOrFloat,
+        *,
         min: IntOrFloat | None = None,
         max: IntOrFloat | None = None,
         step: IntOrFloat | None = None,
@@ -1096,10 +1280,12 @@ class GuiApi:
             )
         )
 
+    @deprecated_positional_shim
     def add_vector2(
         self,
         label: str,
         initial_value: tuple[float, float] | np.ndarray,
+        *,
         min: tuple[float, float] | np.ndarray | None = None,
         max: tuple[float, float] | np.ndarray | None = None,
         step: float | None = None,
@@ -1162,10 +1348,12 @@ class GuiApi:
             )
         )
 
+    @deprecated_positional_shim
     def add_vector3(
         self,
         label: str,
         initial_value: tuple[float, float, float] | np.ndarray,
+        *,
         min: tuple[float, float, float] | np.ndarray | None = None,
         max: tuple[float, float, float] | np.ndarray | None = None,
         step: float | None = None,
@@ -1234,6 +1422,7 @@ class GuiApi:
         self,
         label: str,
         options: Sequence[TLiteralString],
+        *,
         initial_value: TLiteralString | None = None,
         disabled: bool = False,
         visible: bool = True,
@@ -1246,6 +1435,7 @@ class GuiApi:
         self,
         label: str,
         options: Sequence[TString],
+        *,
         initial_value: TString | None = None,
         disabled: bool = False,
         visible: bool = True,
@@ -1253,10 +1443,12 @@ class GuiApi:
         order: float | None = None,
     ) -> GuiDropdownHandle[TString]: ...
 
+    @deprecated_positional_shim
     def add_dropdown(
         self,
         label: str,
         options: Sequence[TLiteralString] | Sequence[TString],
+        *,
         initial_value: TLiteralString | TString | None = None,
         disabled: bool = False,
         visible: bool = True,
@@ -1301,9 +1493,11 @@ class GuiApi:
             ),
         )
 
+    @deprecated_positional_shim
     def add_progress_bar(
         self,
         value: float,
+        *,
         visible: bool = True,
         animated: bool = False,
         color: LiteralColor | tuple[int, int, int] | None = None,
@@ -1345,6 +1539,7 @@ class GuiApi:
         )
         return handle
 
+    @deprecated_positional_shim
     def add_slider(
         self,
         label: str,
@@ -1352,6 +1547,7 @@ class GuiApi:
         max: IntOrFloat,
         step: IntOrFloat,
         initial_value: IntOrFloat,
+        *,
         marks: tuple[IntOrFloat | tuple[IntOrFloat, str], ...] | None = None,
         disabled: bool = False,
         visible: bool = True,
@@ -1429,6 +1625,7 @@ class GuiApi:
             )
         )
 
+    @deprecated_positional_shim
     def add_multi_slider(
         self,
         label: str,
@@ -1436,6 +1633,7 @@ class GuiApi:
         max: IntOrFloat,
         step: IntOrFloat,
         initial_value: tuple[IntOrFloat, ...],
+        *,
         min_range: IntOrFloat | None = None,
         fixed_endpoints: bool = False,
         marks: tuple[IntOrFloat | tuple[IntOrFloat, str], ...] | None = None,
@@ -1516,16 +1714,18 @@ class GuiApi:
             )
         )
 
+    @deprecated_positional_shim
     def add_rgb(
         self,
         label: str,
         initial_value: tuple[int, int, int],
+        *,
         disabled: bool = False,
         visible: bool = True,
         hint: str | None = None,
         order: float | None = None,
     ) -> GuiRgbHandle:
-        """Add an RGB picker to the GUI.
+        """Add an RGB picker to the GUI. All values should be in [0, 255].
 
         Args:
             label: Label to display on the RGB picker.
@@ -1560,16 +1760,18 @@ class GuiApi:
             )
         )
 
+    @deprecated_positional_shim
     def add_rgba(
         self,
         label: str,
         initial_value: tuple[int, int, int, int],
+        *,
         disabled: bool = False,
         visible: bool = True,
         hint: str | None = None,
         order: float | None = None,
     ) -> GuiRgbaHandle:
-        """Add an RGBA picker to the GUI.
+        """Add an RGBA picker to the GUI. All values should be in [0, 255].
 
         Args:
             label: Label to display on the RGBA picker.

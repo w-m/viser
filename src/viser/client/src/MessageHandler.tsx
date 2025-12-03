@@ -3,7 +3,7 @@ import { notifications } from "@mantine/notifications";
 import React, { useContext } from "react";
 import * as THREE from "three";
 import { TextureLoader } from "three";
-import { toMantineColor } from "./ColorUtils";
+import { toMantineColor } from "./components/colorUtils";
 
 import { ViewerContext } from "./ViewerContext";
 import {
@@ -14,8 +14,8 @@ import {
   isGuiComponentMessage,
   isSceneNodeMessage,
 } from "./WebsocketMessages";
-import { isTexture } from "./WebsocketFunctions";
-import { useFrame } from "@react-three/fiber";
+import { isTexture } from "./WebsocketUtils";
+import { useFrame, useThree } from "@react-three/fiber";
 import { Button, Progress } from "@mantine/core";
 import { IconCheck, IconDownload } from "@tabler/icons-react";
 import { computeT_threeworld_world } from "./WorldTransformUtils";
@@ -29,9 +29,9 @@ function useMessageHandler() {
 
   // We could reduce the redundancy here if we wanted to.
   // https://github.com/nerfstudio-project/viser/issues/39
-  const updateSceneNode = viewer.useSceneTree((state) => state.updateSceneNode);
-  const removeSceneNode = viewer.useSceneTree((state) => state.removeSceneNode);
-  const addSceneNode = viewer.useSceneTree((state) => state.addSceneNode);
+  const updateSceneNode = viewer.sceneTreeActions.updateSceneNodeProps;
+  const removeSceneNode = viewer.sceneTreeActions.removeSceneNode;
+  const addSceneNode = viewer.sceneTreeActions.addSceneNode;
   const setTheme = viewer.useGui((state) => state.setTheme);
   const setShareUrl = viewer.useGui((state) => state.setShareUrl);
   const addGui = viewer.useGui((state) => state.addGui);
@@ -39,38 +39,37 @@ function useMessageHandler() {
   const removeModal = viewer.useGui((state) => state.removeModal);
   const removeGui = viewer.useGui((state) => state.removeGui);
   const updateGuiProps = viewer.useGui((state) => state.updateGuiProps);
-  const setClickable = viewer.useSceneTree((state) => state.setClickable);
   const updateUploadState = viewer.useGui((state) => state.updateUploadState);
 
   // Same as addSceneNode, but make a parent in the form of a dummy coordinate
   // frame if it doesn't exist yet.
   function addSceneNodeMakeParents(message: SceneNodeMessage) {
     // Make sure scene node is in attributes.
-    const attrs = viewerMutable.nodeAttributesFromName;
-    attrs[message.name] = {
-      overrideVisibility: attrs[message.name]?.overrideVisibility,
-    };
+    const currentNode = viewer.useSceneTree.getState()[message.name];
+
+    // Make sure parents exists.
+    const sceneState = viewer.useSceneTree.getState();
+    const parentName = message.name.split("/").slice(0, -1).join("/");
+    if (sceneState[parentName]?.message === undefined) {
+      addSceneNodeMakeParents({
+        ...rootNodeTemplate.message,
+        name: parentName,
+      });
+      viewer.sceneTreeActions.updateNodeAttributes(parentName, {
+        visibility: true,
+      });
+    }
+    addSceneNode(message);
 
     // If the object is new or changed, we need to wait until it's created
     // before updating its pose. Updating the pose too early can cause
     // flickering when we replace objects (old object will take the pose of the new
     // object while it's being loaded/mounted).
-    const oldMessage =
-      viewer.useSceneTree.getState().nodeFromName[message.name]?.message;
-    if (oldMessage === undefined || message !== oldMessage) {
-      attrs[message.name]!.poseUpdateState = "waitForMakeObject";
-    }
-
-    // Make sure parents exists.
-    const nodeFromName = viewer.useSceneTree.getState().nodeFromName;
-    const parentName = message.name.split("/").slice(0, -1).join("/");
-    if (!(parentName in nodeFromName)) {
-      addSceneNodeMakeParents({
-        ...rootNodeTemplate.message,
-        name: parentName,
+    if (message !== currentNode?.message) {
+      viewer.sceneTreeActions.updateNodeAttributes(message.name, {
+        poseUpdateState: "waitForMakeObject",
       });
     }
-    addSceneNode(message);
   }
 
   const fileDownloadHandler = useFileDownloadHandler();
@@ -87,6 +86,7 @@ function useMessageHandler() {
       if (message.type === "SkinnedMeshMessage") {
         viewerMutable.skinnedMeshState[message.name] = {
           initialized: false,
+          dirty: false,
           poses: [],
         };
 
@@ -157,19 +157,23 @@ function useMessageHandler() {
       // This is used for plotting, where the Python server will send over a
       // copy of plotly.min.js for the currently-installed version of plotly.
       case "RunJavascriptMessage": {
-        eval(message.source);
+        new Function(message.source)();
         return;
       }
 
       // Add a notification.
       case "NotificationMessage": {
+        console.log(message.uuid, message.props.loading);
         (message.mode === "show" ? notifications.show : notifications.update)({
           id: message.uuid,
           title: message.props.title,
           message: message.props.body,
           withCloseButton: message.props.with_close_button,
           loading: message.props.loading,
-          autoClose: message.props.auto_close,
+          autoClose:
+            message.props.auto_close_seconds === null
+              ? false
+              : message.props.auto_close_seconds * 1000,
           color: toMantineColor(message.props.color),
         });
         return;
@@ -196,13 +200,13 @@ function useMessageHandler() {
 
       // Add an environment map.
       case "EnvironmentMapMessage": {
-        viewer.useSceneTree.setState({ environmentMap: message });
+        viewer.useEnvironment.setState({ environmentMap: message });
         return;
       }
 
       // Disable/enable default lighting.
       case "EnableLightsMessage": {
-        viewer.useSceneTree.setState({
+        viewer.useEnvironment.setState({
           enableDefaultLights: message.enabled,
           enableDefaultLightsShadows: message.cast_shadow,
         });
@@ -223,12 +227,14 @@ function useMessageHandler() {
       case "SetBoneOrientationMessage": {
         const state = viewerMutable.skinnedMeshState;
         state[message.name].poses[message.bone_index].wxyz = message.wxyz;
+        state[message.name].dirty = true;
         break;
       }
       case "SetBonePositionMessage": {
         const state = viewerMutable.skinnedMeshState;
         state[message.name].poses[message.bone_index].position =
           message.position;
+        state[message.name].dirty = true;
         break;
       }
       case "SetCameraLookAtMessage": {
@@ -318,33 +324,45 @@ function useMessageHandler() {
         return;
       }
       case "SetOrientationMessage": {
-        const attr = viewerMutable.nodeAttributesFromName;
-        if (attr[message.name] === undefined) attr[message.name] = {};
-        attr[message.name]!.wxyz = message.wxyz;
-        if (attr[message.name]!.poseUpdateState != "waitForMakeObject")
-          attr[message.name]!.poseUpdateState = "needsUpdate";
-        break;
+        const currentNode = viewer.useSceneTree.getState()[message.name];
+        const newPoseUpdateState =
+          currentNode?.poseUpdateState !== "waitForMakeObject"
+            ? "needsUpdate"
+            : currentNode?.poseUpdateState || "needsUpdate";
+        return {
+          targetNode: message.name,
+          updates: {
+            wxyz: message.wxyz,
+            poseUpdateState: newPoseUpdateState,
+          },
+        };
       }
       case "SetPositionMessage": {
-        const attr = viewerMutable.nodeAttributesFromName;
-        if (attr[message.name] === undefined) attr[message.name] = {};
-        attr[message.name]!.position = message.position;
-        if (attr[message.name]!.poseUpdateState != "waitForMakeObject")
-          attr[message.name]!.poseUpdateState = "needsUpdate";
-        break;
+        const currentNode = viewer.useSceneTree.getState()[message.name];
+        const newPoseUpdateState =
+          currentNode?.poseUpdateState !== "waitForMakeObject"
+            ? "needsUpdate"
+            : currentNode?.poseUpdateState || "needsUpdate";
+        return {
+          targetNode: message.name,
+          updates: {
+            position: message.position,
+            poseUpdateState: newPoseUpdateState,
+          },
+        };
       }
       case "SetSceneNodeVisibilityMessage": {
-        const attr = viewerMutable.nodeAttributesFromName;
-        if (attr[message.name] === undefined) attr[message.name] = {};
-        attr[message.name]!.visibility = message.visible;
-        break;
+        return {
+          targetNode: message.name,
+          updates: { visibility: message.visible },
+        };
       }
       // Add a background image.
       case "BackgroundImageMessage": {
         if (message.rgb_data !== null) {
           const rgb_url = URL.createObjectURL(
             new Blob([message.rgb_data], {
-              type: message.media_type,
+              type: "image/" + message.format,
             }),
           );
           new TextureLoader().load(rgb_url, (texture) => {
@@ -375,7 +393,7 @@ function useMessageHandler() {
           // If depth is available set the texture
           const depth_url = URL.createObjectURL(
             new Blob([message.depth_data], {
-              type: message.media_type,
+              type: "image/" + message.format,
             }),
           );
           new TextureLoader().load(depth_url, (texture) => {
@@ -391,14 +409,12 @@ function useMessageHandler() {
       // Remove a scene node and its children by name.
       case "RemoveSceneNodeMessage": {
         console.log("Removing scene node:", message.name);
-        const nodeFromName = viewer.useSceneTree.getState().nodeFromName;
-        if (!(message.name in nodeFromName)) {
-          console.log("(OK) Skipping scene node removal for " + name);
+        const sceneState = viewer.useSceneTree.getState();
+        if (!(message.name in sceneState)) {
+          console.log("(OK) Skipping scene node removal for " + message.name);
           return;
         }
         removeSceneNode(message.name);
-        const attrs = viewerMutable.nodeAttributesFromName;
-        delete attrs[message.name];
 
         if (viewerMutable.skinnedMeshState[message.name] !== undefined)
           delete viewerMutable.skinnedMeshState[message.name];
@@ -406,10 +422,10 @@ function useMessageHandler() {
       }
       // Set the clickability of a particular scene node.
       case "SetSceneNodeClickableMessage": {
-        // This setTimeout is totally unnecessary, but can help surface some race
-        // conditions.
-        setTimeout(() => setClickable(message.name, message.clickable), 50);
-        return;
+        return {
+          targetNode: message.name,
+          updates: { clickable: message.clickable },
+        };
       }
       // Update props of a GUI component
       case "GuiUpdateMessage": {
@@ -443,12 +459,14 @@ function useMessageHandler() {
   };
 }
 
-function useFileDownloadHandler() {
+function useFileDownloadHandler(): (
+  message: FileTransferStartDownload | FileTransferPart,
+) => void {
   const downloadStatesRef = React.useRef<{
     [uuid: string]: {
       metadata: FileTransferStartDownload;
       notificationId: string;
-      parts: Uint8Array[];
+      parts: FileTransferPart[];
       bytesDownloaded: number;
       displayFilesize: string;
     };
@@ -483,12 +501,10 @@ function useFileDownloadHandler() {
       }
       case "FileTransferPart": {
         const downloadState = downloadStatesRef.current[message.transfer_uuid];
-        if (message.part != downloadState.parts.length) {
-          console.error(
-            "A file download message was dropped; this should never happen!",
-          );
+        if (message.part_index != downloadState.parts.length) {
+          console.error("A file download message was received out of order!");
         }
-        downloadState.parts.push(message.content);
+        downloadState.parts.push(message);
         downloadState.bytesDownloaded += message.content.length;
         break;
       }
@@ -519,9 +535,15 @@ function useFileDownloadHandler() {
     // If done: download file and clear state.
     if (isDone) {
       const url = window.URL.createObjectURL(
-        new Blob(downloadState.parts, {
-          type: downloadState.metadata.mime_type,
-        }),
+        new Blob(
+          // Blob contains the file part contents, sorted by the part index.
+          downloadState.parts
+            .sort((a, b) => a.part_index - b.part_index)
+            .map((part) => part.content),
+          {
+            type: downloadState.metadata.mime_type,
+          },
+        ),
       );
 
       // If save_immediately is true, download the file immediately.
@@ -547,7 +569,7 @@ function useFileDownloadHandler() {
                   variant="light"
                   size="sm"
                   mt="0.05em"
-                  w="100%"
+                  style={{ width: "100%" }}
                 >
                   {`${downloadState.metadata.filename} (${downloadState.displayFilesize})`}
                 </Button>
@@ -571,6 +593,7 @@ export function FrameSynchronizedMessageHandler() {
   const viewerMutable = viewer.mutable.current;
   const messageQueue = viewerMutable.messageQueue;
   const splatContext = React.useContext(GaussianSplatsContext)!;
+  const gl = useThree((state) => state.gl);
 
   useFrame(
     () => {
@@ -632,21 +655,35 @@ export function FrameSynchronizedMessageHandler() {
             true,
           );
 
-        // Note: We don't need to add the camera to the scene for rendering
-        // The renderer.render() function uses the camera directly
-        // Create a new renderer
-        const renderer = new THREE.WebGLRenderer({
-          antialias: true,
-          alpha: true,
-        });
-        renderer.setSize(targetWidth, targetHeight);
-        renderer.setClearColor(
-          0xffffff,
+        // Save current renderer state.
+        const originalSize = gl.getSize(new THREE.Vector2());
+        const originalClearColor = gl.getClearColor(new THREE.Color());
+        const originalClearAlpha = gl.getClearAlpha();
+
+        // Configure for capture.
+        gl.setSize(targetWidth, targetHeight);
+        gl.setClearColor(0xffffff);
+        gl.setClearAlpha(
           viewerMutable.getRenderRequest!.format == "image/png" ? 0.0 : 1.0,
-        ); // Set clear color to transparent
+        );
 
         // Render the scene.
-        renderer.render(viewerMutable.scene!, camera);
+        gl.render(viewerMutable.scene!, camera);
+
+        // Temporary canvas for saving the rendered image. This is needed to
+        // prevent flickers: we need context from the original canvas for
+        // rendering, but we want to revert the renderer state immediately.
+        const canvas = gl.domElement;
+        const bufferCanvas = document.createElement("canvas");
+        bufferCanvas.width = targetWidth;
+        bufferCanvas.height = targetHeight;
+        const ctx = bufferCanvas.getContext("2d")!;
+        ctx.drawImage(canvas, 0, 0, targetWidth, targetHeight);
+
+        // Restore the original renderer state.
+        gl.setSize(originalSize.x, originalSize.y);
+        gl.setClearColor(originalClearColor);
+        gl.setClearAlpha(originalClearAlpha);
 
         // Restore splatting indices.
         if (sortedIndicesOrig !== null && splatMeshProps !== null) {
@@ -654,12 +691,9 @@ export function FrameSynchronizedMessageHandler() {
           splatMeshProps.sortedIndexAttribute.needsUpdate = true;
         }
 
-        // Get the rendered image.
+        // Get the rendered image from our temp canvas.
         viewerMutable.getRenderRequestState = "in_progress";
-        renderer.domElement.toBlob(async (blob) => {
-          renderer.dispose();
-          renderer.forceContextLoss();
-
+        bufferCanvas.toBlob(async (blob) => {
           viewerMutable.sendMessage({
             type: "GetRenderResponseMessage",
             payload: new Uint8Array(await blob!.arrayBuffer()),
@@ -683,7 +717,41 @@ export function FrameSynchronizedMessageHandler() {
             ? requestRenderIndex + 1
             : messageQueue.length;
         const processBatch = messageQueue.splice(0, numMessages);
-        processBatch.forEach(handleMessage);
+
+        // Handle messages and accumulate updates.
+        const updates = processBatch.map(handleMessage).reduce(
+          (acc, cur) => {
+            if (cur === undefined) return acc;
+            else {
+              // console.log(cur.targetNode);
+              return {
+                ...acc,
+                [cur.targetNode]: { ...acc[cur.targetNode], ...cur.updates },
+              };
+            }
+          },
+          {} as { [name: string]: any },
+        );
+
+        // Apply accumulated prop updates to the zustand state.
+        const currentState = viewer.useSceneTree.getState();
+        const mergedUpdates: typeof updates = {};
+        for (const [k, v] of Object.entries(updates)) {
+          if (!(k in currentState)) {
+            console.log(`(OK) Tried to update non-existent scene node ${k}`);
+            continue;
+          }
+          mergedUpdates[k] = { ...currentState[k], ...v };
+        }
+        viewer.useSceneTree.setState(mergedUpdates);
+
+        // Recompute effective visibility for nodes whose visibility changed.
+        // This needs to be done after updates are applied.
+        for (const [nodeName, nodeState] of Object.entries(updates)) {
+          if ("visibility" in nodeState) {
+            viewer.sceneTreeActions.computeEffectiveVisibility(nodeName);
+          }
+        }
       }
     },
     // We should handle messages before doing anything else!!

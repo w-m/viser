@@ -53,7 +53,8 @@ export default function ControlPanel(props: {
   // TODO: will result in unnecessary re-renders.
   const viewer = React.useContext(ViewerContext)!;
   const showGenerated = viewer.useGui(
-    (state) => "root" in state.guiUuidSetFromContainerUuid,
+    (state) =>
+      Object.keys(state.guiUuidSetFromContainerUuid["root"] ?? {}).length > 0,
   );
   const [showSettings, { toggle }] = useDisclosure(false);
 
@@ -106,10 +107,15 @@ export default function ControlPanel(props: {
 
   const panelContents = (
     <>
-      <Collapse in={!showGenerated || showSettings} p="xs" pt="0.375em">
-        <ServerControls />
+      <Collapse in={!showGenerated || showSettings}>
+        <Box p="xs" pt="0.375em">
+          <ServerControls />
+        </Box>
       </Collapse>
-      <Collapse in={showGenerated && !showSettings}>
+      {/*As of Mantine 8.3.3, this `keepMounted` is necessary to prevent some
+      intermittent problems with the initial GUI height being set to 0 when
+      we're under high CPU load.*/}
+      <Collapse in={showGenerated && !showSettings} keepMounted>
         <MemoizedGeneratedGuiContainer containerUuid={ROOT_CONTAINER_ID} />
       </Collapse>
     </>
@@ -193,7 +199,7 @@ function ConnectionStatus() {
           />
         )}
       </Transition>
-      <Box px="xs" style={{ flexGrow: 1 }} lts={"-0.5px"} pt="0.1em">
+      <Box px="xs" style={{ flexGrow: 1, letterSpacing: "-0.5px" }} pt="0.1em">
         {label !== "" ? label : connected ? "Connected" : "Connecting..."}
       </Box>
     </>
@@ -355,7 +361,7 @@ function ShareButton() {
           </>
         )}
         <Text size="xs">
-          This feature is experimental. Problems? Consider{" "}
+          Share links are experimental and bandwidth-limited. Problems? Consider{" "}
           <Anchor href="https://github.com/nerfstudio-project/viser/issues">
             reporting on GitHub
           </Anchor>
